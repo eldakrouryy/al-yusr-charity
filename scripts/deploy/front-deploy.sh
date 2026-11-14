@@ -15,7 +15,7 @@ step "1/4 فحص قبل أي تعديل"
 [ -f "$TARGET/index.html" ] || { echo "✗ مش لاقي $TARGET/index.html"; exit 1; }
 [ -f "$SRC/index.html" ] && [ -f "$SRC/sitemap.php" ] && [ -f "$SRC/.htaccess" ] || { echo "✗ ملفات النسخة الجديدة ناقصة"; exit 1; }
 php -v | head -1
-for f in sitemap.php seo.php; do php -l "$SRC/$f" >/dev/null && echo "  ✓ $f سليم"; done
+for f in sitemap.php seo.php og-room.php; do [ -f "$SRC/$f" ] || continue; php -l "$SRC/$f" >/dev/null && echo "  ✓ $f سليم"; done
 echo "  ملفات جديدة: $(find "$SRC" -type f | wc -l) | مساحة: $(du -sh "$SRC" | cut -f1)"
 # The two archives must come from the same build: front-2 carries MANIFEST.txt (size + path of every file).
 if [ -f MANIFEST.txt ]; then
@@ -90,6 +90,8 @@ for a in $(grep -o 'assets/index-[A-Za-z0-9_-]*\.\(js\|css\)' "$TARGET/index.htm
   ct=$(curl -s -m 20 -o /dev/null -w '%{content_type}' "https://elyusr.org/$a?check=$TS" || true); printf '  %-30s → %s\n' "$a" "$ct"
   case "$ct" in *javascript*|*css*) ;; *) ok=0 ;; esac
 done
+# Sebha link preview with the name in it: 200 = drawn on the server, 302 = GD missing, the fixed picture is used (not an error).
+printf '  %-30s → %s\n' "/og-room.php?s=ummah" "$(curl -s -m 20 -o /dev/null -w '%{http_code} %{content_type}' "https://elyusr.org/og-room.php?s=ummah&check=$TS" || true)"
 SM=$(curl -s -m 30 "https://elyusr.org/sitemap.xml" || true)
 echo "  /sitemap.xml   → روابط: $( (grep -o '<url>' <<<"$SM" || true) | wc -l) | تصميم: $(grep -q 'sitemap.xsl' <<<"$SM" && echo موجود || echo مش موجود) | مقالات: $( (grep -o '/blog/[^<]*' <<<"$SM" || true) | wc -l)"
 grep -q '<urlset' <<<"$SM" || ok=0

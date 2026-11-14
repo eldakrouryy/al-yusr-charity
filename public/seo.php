@@ -127,8 +127,8 @@ function fetch_page(string $path, string $lang): array
 }
 
 /**
- * Shared misbaha (/misbaha/{slug}): the link preview carries the person's name and a picture made
- * for its kind (public/og/misbaha-{kind}.jpg). The page itself stays out of search (noindex).
+ * Shared misbaha (/misbaha/{slug}): the link preview carries the person's name, also inside the
+ * picture (public/og-room.php; public/og/misbaha-{kind}.jpg when the room cannot be read). The page itself stays out of search (noindex).
  * @return array{0: ?array, 1: int}
  */
 function misbaha_room_page(string $slug, string $lang): array
@@ -158,16 +158,18 @@ function misbaha_room_page(string $slug, string $lang): array
             'description' => $lang === 'en'
                 ? 'One shared tasbih for everyone: remember Allah and pray for all Muslims, living and dead. Every dhikr adds to one count.'
                 : 'سبحة إلكترونية جماعية مفتوحة للجميع: اذكر الله وادعُ للمسلمين والمسلمات، الأحياء منهم والأموات، وكل ذكر بيتضاف لعدّاد واحد يشارك فيه الكل.',
-            'image' => SITE . '/og/misbaha-group.jpg?v=2026.11b',
+            'image' => SITE . '/og-room.php?s=ummah&v=2026.11c',
             'app' => ['manifest' => '/misbaha-manifest.php?slug=ummah&name=' . rawurlencode('المسلمين'), 'title' => 'سبحة المسلمين'],
         ], 200];
     }
     $kind = in_array($room['kind'] ?? '', ['deceased', 'sick', 'group'], true) ? $room['kind'] : 'deceased';
-    $image = SITE . '/og/misbaha-' . $kind . '.jpg?v=2026.11b';
+    $image = SITE . '/og/misbaha-' . $kind . '.jpg?v=2026.11c';
     if (! is_array($room) || empty($room['name'])) {
         return [['title' => 'سبحة مشتركة | مؤسسة اليسر', 'description' => 'شارك بالتسبيح والاستغفار والصلاة على النبي ﷺ، وكل ذكر بيتضاف لعدّاد واحد.', 'image' => $image, 'robots' => 'noindex,follow'], 200];
     }
     $name = trim((string) $room['name']);
+    // the preview picture with the person's name written in it (falls back to the kind's picture)
+    $image = SITE . '/og-room.php?s=' . rawurlencode($slug) . '&v=2026.11c';
     $female = ($room['gender'] ?? '') === 'f';
     if ($lang === 'en') {
         $title = $kind === 'sick' ? "For the healing of $name" : ($kind === 'group' ? $name : "For the soul of $name");
@@ -262,7 +264,7 @@ function render(string $html, array $p, string $path, string $lang): string
     $title = (string) ($p['title'] ?? '');
     $desc = (string) ($p['description'] ?? '');
     // The plain sebha page has its own link preview (not the site's general cover photo).
-    $fallback = $path === '/misbaha' ? SITE . '/og/misbaha.jpg?v=2026.11b' : SITE . '/og-cover.jpg?v=2026.1';
+    $fallback = $path === '/misbaha' ? SITE . '/og/misbaha.jpg?v=2026.11c' : SITE . '/og-cover.jpg?v=2026.1';
     $image = (string) ($p['image'] ?? '') ?: $fallback;
 
     // Replace the defaults of index.html (they carry data-rh, so react-helmet takes them over later).

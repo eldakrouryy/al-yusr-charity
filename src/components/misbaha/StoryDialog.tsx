@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { Check, Copy, Facebook, ImageDown, Instagram, Send, Share2, X } from "lucide-react";
 import { WhatsAppIcon } from "@/components/common/icons/WhatsAppIcon";
 import { drawMisbahaStory } from "@/lib/misbahaStoryImage";
 import { track } from "@/lib/track";
+import { whatsappFallback, whatsappShare } from "@/lib/whatsappShare";
 import type { MisbahaRoom } from "@/data/api/misbahaRoomsApi";
 import { kindMeta, roomShareText, roomTagline, roomTitle } from "@/data/memorialDuas";
 
@@ -120,11 +121,12 @@ export function StoryDialog({ isAr, room, personal, pageUrl, onClose }: {
     }
   };
 
-  const apps = [
-    { key: "whatsapp", label: "WhatsApp", Icon: WhatsAppIcon, cls: "bg-[#25D366] text-white", href: `https://wa.me/?text=${encodeURIComponent(`${text}\n${link("whatsapp")}`)}` },
-    { key: "telegram", label: "Telegram", Icon: Send, cls: "bg-[#229ED9] text-white", href: `https://t.me/share/url?url=${encodeURIComponent(link("telegram"))}&text=${encodeURIComponent(text)}` },
-    { key: "facebook", label: "Facebook", Icon: Facebook, cls: "bg-[#1877F2] text-white", href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link("facebook"))}` },
-    { key: "x", label: "X", Icon: XIcon, cls: "bg-black text-white", href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(link("x"))}` },
+  const waText = `${text}\n${link("whatsapp")}`;
+  const apps: { key: string; label: string; Icon: ComponentType<{ className?: string }>; cls: string; href: string; target?: "_blank" }[] = [
+    { key: "whatsapp", label: "WhatsApp", Icon: WhatsAppIcon, cls: "bg-[#25D366] text-white", ...whatsappShare(waText) },
+    { key: "telegram", label: "Telegram", Icon: Send, cls: "bg-[#229ED9] text-white", href: `https://t.me/share/url?url=${encodeURIComponent(link("telegram"))}&text=${encodeURIComponent(text)}`, target: "_blank" },
+    { key: "facebook", label: "Facebook", Icon: Facebook, cls: "bg-[#1877F2] text-white", href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link("facebook"))}`, target: "_blank" },
+    { key: "x", label: "X", Icon: XIcon, cls: "bg-black text-white", href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(link("x"))}`, target: "_blank" },
   ];
 
   return (
@@ -173,8 +175,8 @@ export function StoryDialog({ isAr, room, personal, pageUrl, onClose }: {
 
           <p className="mt-5 text-xs font-black text-muted-foreground">{isAr ? "أرسل الرابط" : "Send the link"}</p>
           <div className="mt-2 grid grid-cols-4 gap-2">
-            {apps.map(({ key, label, Icon, cls, href }) => (
-              <a key={key} href={href} target="_blank" rel="noopener noreferrer" onClick={() => sent(key)}
+            {apps.map(({ key, label, Icon, cls, href, target }) => (
+              <a key={key} href={href} target={target} rel="noopener noreferrer" onClick={() => { sent(key); if (key === "whatsapp") whatsappFallback(waText); }}
                 className={`flex flex-col items-center justify-center gap-1 rounded-xl py-3 text-[11px] font-black transition hover:brightness-95 ${cls}`}>
                 <Icon className="h-5 w-5" /> {label}
               </a>

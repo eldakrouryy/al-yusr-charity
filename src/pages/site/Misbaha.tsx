@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { RotateCcw, Vibrate, VibrateOff, Share2, Check, ImageDown, X, Plus, Flame, CalendarDays, Users, Gift, ArrowLeft, ArrowDown, Undo2, Maximize2, ChevronDown, Infinity as InfinityIcon } from "lucide-react";
+import { RotateCcw, Share2, Check, ImageDown, X, Plus, Flame, CalendarDays, Users, Gift, ArrowLeft, ArrowDown, Undo2, Maximize2, ChevronDown, Infinity as InfinityIcon } from "lucide-react";
 import { DHIKR_GROUPS, ALL_DHIKR, MIXED_DHIKR, groupOfDhikr, type Dhikr as DhikrType } from "@/data/adhkar";
 import { misbahaRoomsApi, type MisbahaRoom } from "@/data/api/misbahaRoomsApi";
 import { roomShareText, roomTitle } from "@/data/memorialDuas";
@@ -9,10 +9,12 @@ import { RoomExtras } from "@/components/misbaha/RoomExtras";
 import { MisbahaFollow } from "@/components/misbaha/MisbahaFollow";
 import { StoryDialog } from "@/components/misbaha/StoryDialog";
 import { FocusMode } from "@/components/misbaha/FocusMode";
+import { StableText } from "@/components/misbaha/StableText";
 import { addToHistory, dayKey, lastWeek, readHistory } from "@/lib/sebhaHistory";
 import { MemorialCreate } from "@/components/misbaha/MemorialCreate";
 import { UMMAH_ROOM_SLUG, UmmahRoomCard } from "@/components/misbaha/UmmahRoomCard";
 import { track } from "@/lib/track";
+import { whatsappFallback, whatsappShare } from "@/lib/whatsappShare";
 import { isEndpointMissing } from "@/data/api/backendPending";
 import { drawMisbahaSummary } from "@/lib/misbahaSummaryImage";
 import { PageLayout } from "@/components/layout/PageLayout";
@@ -34,6 +36,7 @@ const TARGETS = [33, 100, 1000, 0]; // 0 = open count
 const BEADS = 33;
 const MIXED = MIXED_DHIKR;
 const MIXED_KEY = "__mixed";
+const DHIKR_TEXT = "mt-1 text-center text-lg font-black leading-[1.65] text-white sm:text-2xl sm:leading-[1.7]";
 type Mode = "mixed" | "single";
 // «One kind» is the default (istighfar, tasbih, salawat…): its phrases take turns on every tap,
 // so the visitor picks a kind, not a phrase from a list. «Varied» mixes all kinds.
@@ -45,7 +48,7 @@ const MODES: { id: Mode; ar: string; en: string; subAr: string; subEn: string }[
 type Tally = Partial<Record<(typeof GROUPS)[number]["id"], number>>;
 type Custom = { id: string; text: string };
 type Saved = {
-  mode: Mode; selected: string; counts: Record<string, number>; tally: Tally; targets: Record<string, number>; day: string; today: number; vibrate: boolean; custom: Custom[];
+  mode: Mode; selected: string; counts: Record<string, number>; tally: Tally; targets: Record<string, number>; day: string; today: number; custom: Custom[];
   /** the visitor chose a kind / mode themself: a shared sebha's suggested dhikr no longer overrides it */
   picked?: boolean;
 };
@@ -60,7 +63,7 @@ const todayStr = () => {
 /** Same day → everything as it was left. New day → counts and summary start from zero (settings stay). */
 const startDay = (s: Saved): Saved => (s.day === todayStr() ? s : { ...s, day: todayStr(), today: 0, counts: {}, tally: {} });
 const load = (room?: string): Saved => {
-  const fresh: Saved = { mode: "single", selected: ALL[0].id, counts: {}, tally: {}, targets: {}, day: todayStr(), today: 0, vibrate: true, custom: [] };
+  const fresh: Saved = { mode: "single", selected: ALL[0].id, counts: {}, tally: {}, targets: {}, day: todayStr(), today: 0, custom: [] };
   try {
     const raw = localStorage.getItem(keyFor(room)) ?? (room ? null : localStorage.getItem("yusr-misbaha-v1"));
     const s = JSON.parse(raw || "null") as Partial<Saved> | null;
@@ -262,11 +265,6 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
   const lit = target ? Math.round((inRound / target) * BEADS) : count % BEADS;
   const showFull = target > 0 && count > 0 && inRound === 0; // a round just completed → full ring
 
-  const vibrate = (ms: number | number[]) => {
-    if (!st.vibrate) return;
-    try { navigator.vibrate?.(ms); } catch { /* unsupported */ }
-  };
-
   const tap = useCallback(() => {
     const completes = target > 0 && (count + 1) % target === 0;
     // the visitor's own phrases count as «ذكر ودعاء» in the summary
@@ -294,8 +292,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
       window.clearTimeout(doneTimer.current);
       doneTimer.current = window.setTimeout(() => setDone(false), 1800);
     }
-    vibrate(completes ? [40, 60, 40] : 8);
-  }, [countKey, target, count, dhikr.id, roomSlug, roomState, st.today, streak]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [countKey, target, count, dhikr.id, roomSlug, roomState, st.today, streak]);
 
   /** Takes back the last tap (or the last reset). A tap already sent to a shared sebha stays counted there. */
   const undo = useCallback(() => {
@@ -319,8 +316,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
       pendingAdd.current -= 1;
       setRoom((r) => (r ? { ...r, total_count: Math.max(0, r.total_count - 1) } : r));
     }
-    vibrate(15);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Phones count on the finger lifting, not on the browser's click: iPhone Safari drops or delays
   // clicks on fast repeated taps (and on the first tap after a hover change), so taps went missing.
@@ -400,7 +396,12 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
   const shareText = room
     ? roomShareText(room.kind, room.gender, room.name, isAr)
     : (isAr ? "سبحة إلكترونية من مؤسسة اليسر: صلّ على النبي ﷺ، وسبّح، واستغفر" : "A digital tasbih from Al-Yusr");
-  const waHref = `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${pageUrl}?utm_source=whatsapp&utm_medium=share&utm_campaign=misbaha`)}`;
+  const waText = `${shareText}\n${pageUrl}?utm_source=whatsapp&utm_medium=share&utm_campaign=misbaha`;
+  const wa = whatsappShare(waText);
+  const onWhatsapp = () => {
+    track("misbaha_share", { payload: { channel: "whatsapp", room: roomSlug ?? "personal" }, fbCustom: false });
+    whatsappFallback(waText);
+  };
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(pageUrl);
@@ -430,14 +431,14 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
           title={roomSlug === UMMAH_ROOM_SLUG ? (isAr ? "سبحة جميع المسلمين والمسلمات | سبحة جماعية أونلاين — مؤسسة اليسر" : "The misbaha of all Muslims | shared online tasbih — Al-Yusr") : room ? `${isAr ? "سبحة" : "Tasbih"} ${roomTitle(room.kind, room.gender, room.name, isAr)} | ${isAr ? "مؤسسة اليسر" : "Al-Yusr"}` : (isAr ? "سبحة مشتركة | مؤسسة اليسر" : "Shared tasbih | Al-Yusr")}
           description={isAr ? "شارك بالتسبيح والاستغفار والصلاة على النبي ﷺ، ويُضاف كل ذكر إلى عدّاد واحد." : "Join in with tasbih, istighfar and salawat; every dhikr adds to one shared count."}
           path={`/misbaha/${roomSlug}`}
-          image={`https://elyusr.org/og/misbaha-${room?.kind ?? "deceased"}.jpg?v=2026.11b`}
+          image={room ? `https://elyusr.org/og-room.php?s=${encodeURIComponent(roomSlug)}&v=2026.11c` : `https://elyusr.org/og/misbaha-${room?.kind ?? "deceased"}.jpg?v=2026.11c`}
         />
       ) : (
       <SEOHelmet
         title={isAr ? "السبحة الإلكترونية | صلاة على النبي وتسبيح واستغفار — مؤسسة اليسر" : "Digital tasbih | Salawat, tasbih & istighfar — Al-Yusr"}
         description={isAr ? "سبحة إلكترونية سهلة: صلِّ على النبي ﷺ، وسبّح، واستغفر، واذكر الله، مع عدّاد وهدف يومي وفضل كل ذكر من الأحاديث الصحيحة. وأنشئ سبحة مشتركة لروح من تحب وشاركها." : "An easy digital tasbih: salawat, tasbih, istighfar and dhikr with a counter, daily goal and the virtue of each dhikr. Create a shared tasbih for a loved one who passed away."}
         path="/misbaha"
-        image="https://elyusr.org/og/misbaha.jpg?v=2026.11b"
+        image="https://elyusr.org/og/misbaha.jpg?v=2026.11c"
       />
       )}
       <BreadcrumbSchema items={[{ name: isAr ? "الرئيسية" : "Home", url: "https://elyusr.org/" }, { name: isAr ? "السبحة الإلكترونية" : "Digital tasbih", url: "https://elyusr.org/misbaha" }]} />
@@ -452,7 +453,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
           <div className={`mx-auto max-w-2xl text-center sm:mt-6 ${roomSlug ? "mt-0" : "mt-3"}`}>
             {roomSlug ? (
               <RoomHeader isAr={isAr} state={roomState} room={room}
-                live={roomState === "ok"} othersRecent={othersRecent} fmt={(n) => n.toLocaleString(isAr ? "ar-EG" : "en-US")} />
+                live={roomState === "ok"} othersRecent={othersRecent} mine={st.today} fmt={(n) => n.toLocaleString(isAr ? "ar-EG" : "en-US")} />
             ) : (
               <>
                 <div className="mb-3 flex flex-wrap items-center justify-center gap-2 text-xs font-black sm:mb-4">
@@ -477,16 +478,19 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
             )}
           </div>
 
-          <div className="mt-5 grid grid-cols-[minmax(0,1fr)] items-start gap-8 sm:mt-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <div className={`${roomSlug ? "mt-3" : "mt-5"} grid grid-cols-[minmax(0,1fr)] items-start gap-8 sm:mt-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]`}>
             {/* ── Counter ── */}
             <div className="flex min-w-0 flex-col items-center">
-              <div className="mb-4 flex min-h-[6.5rem] w-full min-w-0 max-w-md flex-col justify-center text-center sm:mb-5" aria-live="polite">
+              <div className="mb-3 flex w-full min-w-0 max-w-md flex-col justify-center text-center sm:mb-5" aria-live="polite">
                 <button type="button" onClick={() => document.getElementById("dhikr-choice")?.scrollIntoView({ behavior: "smooth", block: "start" })}
                   className="mx-auto mb-2 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold text-white/80 transition hover:bg-white/15">
                   <ArrowDown className="h-3.5 w-3.5 text-secondary" /> {isAr ? "يمكنك النزول واختيار الذكر الذي تحبه" : "Scroll down to pick the dhikr you like"}
                 </button>
                 <p className="text-xs font-black text-secondary">{seq ? (isAr ? "قل الآن" : "Say now") : (isAr ? "ذكرك" : "Your dhikr")}<span className="hidden font-bold text-white/45 sm:inline">{isAr ? " (اضغط على السبحة أو زر المسافة)" : " (tap the beads or press Space)"}</span></p>
-                <p key={`${dhikr.id}-${seq ? count : 0}`} className="misbaha-fade mt-1 text-xl font-black leading-[1.7] text-white sm:text-2xl">{isAr ? dhikr.text : dhikr.en}</p>
+                {/* As tall as the longest phrase in turn, so the beads do not move between phrases. */}
+                <StableText all={(seq ?? [dhikr]).map((d) => (isAr ? d.text : d.en))} className={DHIKR_TEXT}>
+                  <p key={`${dhikr.id}-${seq ? count : 0}`} className={`misbaha-fade ${DHIKR_TEXT}`}>{isAr ? dhikr.text : dhikr.en}</p>
+                </StableText>
                 {nextDhikr && (
                   <p className="mt-1 truncate text-xs font-bold text-white/55">{isAr ? `التالي: ${nextDhikr.text}` : `Next: ${nextDhikr.en}`}</p>
                 )}
@@ -498,7 +502,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
                 onPointerCancel={() => { ringTouch.current = null; }}
                 onClick={onRingClick}
                 onContextMenu={(e) => e.preventDefault()}
-                className={`misbaha-ring relative aspect-square w-full max-w-[min(340px,72vw)] select-none sm:max-w-[340px] rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-secondary/60 ${done ? "misbaha-done" : ""}`}
+                className={`misbaha-ring relative aspect-square w-full ${roomSlug ? "max-w-[min(340px,64vw)]" : "max-w-[min(340px,72vw)]"} select-none sm:max-w-[340px] rounded-full focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-secondary/60 ${done ? "misbaha-done" : ""}`}
                 style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent", WebkitTouchCallout: "none" }}
                 aria-label={isAr ? `اضغط بعد أن تقول: ${dhikr.text}. العدد ${count}` : `Tap after saying: ${dhikr.en}. Count ${count}`}
               >
@@ -569,10 +573,6 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
                   className="inline-flex items-center gap-1.5 rounded-full border border-white/20 px-4 py-1.5 text-white/90 transition hover:bg-white/10 disabled:opacity-35">
                   <RotateCcw className="h-4 w-4" /> {isAr ? "تصفير" : "Reset"}
                 </button>
-                <button type="button" onClick={() => setSt((s) => ({ ...s, vibrate: !s.vibrate }))} aria-pressed={st.vibrate}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/20 px-4 py-1.5 text-white/90 transition hover:bg-white/10">
-                  {st.vibrate ? <Vibrate className="h-4 w-4" /> : <VibrateOff className="h-4 w-4" />} {isAr ? (st.vibrate ? "الاهتزاز مفعّل" : "الاهتزاز متوقف") : st.vibrate ? "Vibration on" : "Vibration off"}
-                </button>
               </div>
               <button type="button" onClick={() => setFocus(true)}
                 className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-5 py-2 text-sm font-black text-white transition hover:bg-white/20">
@@ -601,7 +601,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
                 )}
               </div>
               {roomSlug && room && roomState === "ok" && (
-                <RoomShareActions isAr={isAr} room={room} waHref={waHref} copied={copied} onCopy={copyLink}
+                <RoomShareActions isAr={isAr} room={room} wa={wa} onWhatsapp={onWhatsapp} copied={copied} onCopy={copyLink}
                   onNativeShare={canNative ? nativeShare : null} onStory={() => setStoryOpen(true)} />
               )}
             </div>
@@ -740,6 +740,7 @@ const MisbahaView = ({ roomSlug, isAr }: { roomSlug?: string; isAr: boolean }) =
         <FocusMode
           isAr={isAr}
           text={isAr ? dhikr.text : dhikr.en}
+          allTexts={(seq ?? [dhikr]).map((d) => (isAr ? d.text : d.en))}
           next={nextDhikr ? (isAr ? nextDhikr.text : nextDhikr.en) : null}
           shown={fmt(target ? inRound || (showFull ? target : 0) : count)}
           target={target ? (isAr ? `من ${fmt(target)}` : `of ${fmt(target)}`) : isAr ? "عدّ مفتوح" : "open count"}

@@ -1,90 +1,143 @@
 <!doctype html>
 <!--
-  Link-preview images (1200×630) for the sebha pages: public/og/misbaha.jpg and misbaha-sick.jpg.
-  Rendered with headless Chrome by scripts/og/render-misbaha-og.sh — open with ?v=main or ?v=sick.
+  Link-preview images (1200×630) for the sebha pages, rendered with headless Chrome by
+  scripts/og/render-misbaha-og.sh. Open with ?v=<variant>:
+    main            → public/og/misbaha.jpg        (/misbaha: the Al-Yusr logo inside a sebha, with a dhikr)
+    sick|deceased|group → public/og/misbaha-{kind}.jpg  (a shared sebha whose name could not be read)
+    room-sick|room-deceased|room-group → public/og/base/room-{kind}.jpg
+        the same picture with no text on the right: public/og-room.php writes it with the person's name.
+  The sebha sits in the middle, so it is still seen when WhatsApp crops the preview to a square.
 -->
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8" />
 <style>
   @font-face { font-family: "DIN"; src: url("../../public/fonts/DINNextLTArabic-Bold.ttf"); font-weight: 700 900; }
+  @font-face { font-family: "AmiriQ"; src: url("../../public/fonts/AmiriQuran-Arabic.woff2"); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
   body {
     font-family: "DIN", sans-serif; color: #fff; position: relative;
-    background: radial-gradient(ellipse 70% 90% at 22% 50%, #1d5a2c 0%, #0d3f22 55%, #06301c 100%);
+    background:
+      radial-gradient(circle at 50% 46%, rgba(163,230,53,0.16) 0, rgba(163,230,53,0) 300px),
+      radial-gradient(ellipse 90% 100% at 50% 40%, #145030 0%, #0b3a22 55%, #052616 100%);
   }
-  .ring { position: absolute; left: 70px; top: 105px; width: 420px; height: 420px; }
-  .center { position: absolute; left: 190px; top: 225px; width: 180px; height: 180px; display: grid; place-items: center; }
-  .center img { width: 160px; height: 160px; border-radius: 50%; }
-  .text { position: absolute; right: 72px; top: 0; bottom: 0; width: 620px; display: flex; flex-direction: column; justify-content: center; }
-  .kicker { color: #a3e635; font-size: 27px; font-weight: 800; }
-  h1 { margin-top: 14px; font-size: 76px; line-height: 1.15; font-weight: 900; }
-  p { margin-top: 18px; font-size: 30px; line-height: 1.6; color: rgba(255,255,255,0.9); }
-  .foot { position: absolute; right: 72px; bottom: 36px; display: flex; align-items: center; gap: 14px; direction: ltr; }
-  .foot b { font-family: system-ui, sans-serif; font-size: 26px; font-weight: 700; color: rgba(255,255,255,0.9); }
-  .foot img { width: 54px; height: 54px; border-radius: 50%; }
+  /* faint eight-point star pattern */
+  .pattern { position: absolute; inset: 0; opacity: 0.06; }
+  #sebha { position: absolute; left: 0; top: 0; width: 1200px; height: 630px; }
+  .side { position: absolute; top: 0; bottom: 0; width: 330px; display: flex; flex-direction: column; justify-content: center; }
+  .right { right: 56px; text-align: right; }
+  .left { left: 56px; text-align: center; align-items: center; }
+  .kicker { color: #a3e635; font-size: 24px; font-weight: 800; }
+  h1 { margin-top: 10px; font-size: 64px; line-height: 1.12; font-weight: 900; }
+  .sub { margin-top: 14px; font-size: 24px; line-height: 1.55; color: rgba(255,255,255,0.86); }
+  .dhikr { font-family: "AmiriQ", serif; font-size: 44px; line-height: 1.75; color: #f6e7b8; text-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+  .rule { width: 120px; height: 2px; margin: 14px auto; background: linear-gradient(90deg, transparent, #d4a73a, transparent); }
+  .site { position: absolute; left: 0; right: 0; bottom: 22px; text-align: center; direction: ltr; font: 700 22px system-ui, sans-serif; color: rgba(255,255,255,0.75); letter-spacing: 0.5px; }
+
+  /* room variants: sebha on the left; the right side is left for og-room.php or the fixed text */
+  .room #sebha { left: -300px; }
+  .room .left { display: none; }
+  .room .right { width: 640px; right: 60px; }
+  .room .kicker { font-size: 28px; }
+  .room .sub { margin-top: 6px; font-size: 27px; }
+  .room .site { left: auto; right: 60px; text-align: right; }
 </style>
 </head>
 <body>
-  <svg class="ring" viewBox="0 0 420 420" id="ring"></svg>
-  <div class="center" id="center"></div>
-  <div class="text">
+  <svg class="pattern" viewBox="0 0 1200 630" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <pattern id="star" width="90" height="90" patternUnits="userSpaceOnUse">
+        <path d="M45 15 L53 37 L75 45 L53 53 L45 75 L37 53 L15 45 L37 37 Z" fill="none" stroke="#fff" stroke-width="1.4" />
+        <rect x="30" y="30" width="30" height="30" transform="rotate(45 45 45)" fill="none" stroke="#fff" stroke-width="1" />
+      </pattern>
+    </defs>
+    <rect width="1200" height="630" fill="url(#star)" />
+  </svg>
+
+  <svg id="sebha" viewBox="0 0 1200 630" aria-hidden="true"></svg>
+
+  <div class="side right" id="right">
     <div class="kicker" id="kicker"></div>
     <h1 id="title"></h1>
-    <p id="line"></p>
+    <p class="sub" id="sub"></p>
   </div>
-  <div class="foot"><img src="../../public/icons/icon-192.png" alt="" /><b>elyusr.org</b></div>
+  <div class="side left" id="left">
+    <div class="dhikr" id="d1"></div>
+    <div class="rule"></div>
+    <div class="dhikr" id="d2"></div>
+  </div>
+  <div class="site">elyusr.org</div>
 
 <script>
   const V = new URLSearchParams(location.search).get("v") || "main";
+  const room = V.startsWith("room-");
+  const kind = room ? V.slice(5) : V === "main" ? null : V;
   const C = {
-    main: {
-      kicker: "مؤسسة اليسر الخيرية",
-      title: "السبحة الإلكترونية",
-      line: "صلِّ على النبي ﷺ، وسبّح، واستغفر — واعمل سبحة مشتركة لحد غالي عليك",
-    },
-    sick: {
-      kicker: "سبحة مشتركة · بنية الشفاء",
-      title: "ادعُ معانا بالشفاء",
-      line: "اللهم ربّ الناس أذهب البأس، اشفِ أنت الشافي، شفاءً لا يغادر سقمًا",
-    },
-  }[V];
-  document.getElementById("kicker").textContent = C.kicker;
-  document.getElementById("title").textContent = C.title;
-  document.getElementById("line").textContent = C.line;
-
-  // 33 beads, the three «marker» beads brighter (same look as the site's sebha).
-  const ring = document.getElementById("ring");
-  let beads = "";
-  for (let i = 0; i < 33; i++) {
-    const a = (-90 + (i * 360) / 33) * (Math.PI / 180);
-    const x = 210 + 170 * Math.cos(a), y = 210 + 170 * Math.sin(a);
-    const mark = i % 11 === 0;
-    beads += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${mark ? 12 : 10.5}" fill="${mark ? "#a3e635" : "rgba(163,230,53,0.55)"}"/>`;
-  }
-  ring.innerHTML = beads;
-
-  const center = document.getElementById("center");
-  if (V === "sick") {
-    // A heart with a medical cross and a pulse line: «for healing».
-    center.innerHTML = `
-      <svg viewBox="0 0 200 200" width="200" height="200">
-        <defs>
-          <linearGradient id="h" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#fb7185"/><stop offset="1" stop-color="#e11d48"/>
-          </linearGradient>
-          <filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.35"/></filter>
-        </defs>
-        <circle cx="100" cy="100" r="92" fill="rgba(255,255,255,0.06)" stroke="rgba(163,230,53,0.35)" stroke-width="2"/>
-        <path filter="url(#s)" fill="url(#h)" d="M100 168 C 58 138, 26 112, 26 78 C 26 54, 44 36, 67 36 C 82 36, 94 44, 100 56 C 106 44, 118 36, 133 36 C 156 36, 174 54, 174 78 C 174 112, 142 138, 100 168 Z"/>
-        <rect x="88" y="62" width="24" height="70" rx="5" fill="#fff"/>
-        <rect x="65" y="85" width="70" height="24" rx="5" fill="#fff"/>
-        <polyline points="18,150 62,150 74,132 86,166 98,142 106,150 182,150" fill="none" stroke="#a3e635" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
-      </svg>`;
+    main: { kicker: "مؤسسة اليسر الخيرية", title: "السبحة<br>الإلكترونية", sub: "صلِّ على النبي ﷺ، وسبّح، واستغفر" },
+    sick: { kicker: "سبحة مشتركة · بنية الشفاء", title: "ادعُ معانا<br>بالشفاء", sub: "اللهم ربّ الناس أذهب البأس، اشفِ أنت الشافي" },
+    deceased: { kicker: "سبحة مشتركة · لروح متوفى", title: "شارك بالذكر<br>والدعاء", sub: "كل تسبيحة واستغفار بيتضافوا لعدّاد واحد" },
+    group: { kicker: "سبحة مشتركة · ذكر جماعي", title: "اذكر الله<br>معانا", sub: "كل ذكر بيتضاف لعدّاد واحد يشارك فيه الكل" },
+  };
+  const c = C[kind || "main"];
+  document.getElementById("kicker").textContent = c.kicker;
+  if (room) {
+    // og-room.php writes the whole text block (kicker, «لروح المرحوم», the name, the line under it)
+    document.body.classList.add("room");
+    document.getElementById("right").style.display = "none";
   } else {
-    center.innerHTML = `<img src="../../public/icons/icon-512.png" alt="" />`;
+    document.getElementById("title").innerHTML = c.title;
+    document.getElementById("sub").textContent = c.sub;
   }
+  if (V === "main") {
+    document.getElementById("d1").textContent = "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ";
+    document.getElementById("d2").textContent = "سُبْحَانَ اللَّهِ الْعَظِيمِ";
+  } else if (!room) {
+    document.body.classList.add("room");
+  }
+
+  // A sebha: 33 shaded beads on a loop around the centre, the «imam» bead and a tassel below.
+  const cx = 600, cy = 292, R = 196;
+  const bead = (x, y, r, id) => `<g><circle cx="${x}" cy="${y + 3}" r="${r}" fill="rgba(0,0,0,0.28)"/><circle cx="${x}" cy="${y}" r="${r}" fill="url(#${id})"/>` +
+    `<ellipse cx="${x - r * 0.35}" cy="${y - r * 0.4}" rx="${r * 0.32}" ry="${r * 0.22}" fill="rgba(255,255,255,0.55)"/></g>`;
+  let s = `<defs>
+    <radialGradient id="b" cx="38%" cy="32%" r="70%"><stop offset="0" stop-color="#fff1bf"/><stop offset="0.45" stop-color="#e2b04a"/><stop offset="1" stop-color="#8a5a12"/></radialGradient>
+    <radialGradient id="m" cx="38%" cy="32%" r="70%"><stop offset="0" stop-color="#e9ffc2"/><stop offset="0.45" stop-color="#a3e635"/><stop offset="1" stop-color="#3f6212"/></radialGradient>
+    <linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2b04a"/><stop offset="1" stop-color="#8a5a12"/></linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000" flood-opacity="0.45"/></filter>
+  </defs>`;
+  // the thread
+  s += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="rgba(226,176,74,0.55)" stroke-width="2.5"/>`;
+  // tassel hanging from the bottom
+  const by = cy + R;
+  s += `<path d="M${cx} ${by} L${cx} ${by + 40}" stroke="#c8952f" stroke-width="3"/>`;
+  s += `<rect x="${cx - 13}" y="${by + 30}" width="26" height="40" rx="10" fill="url(#t)"/>`;
+  for (let k = -6; k <= 6; k++) {
+    const x = cx + k * 3.2;
+    s += `<path d="M${x} ${by + 66} Q ${x + k * 1.2} ${by + 92} ${x + k * 2.6} ${by + 116}" stroke="${k % 2 ? "#e2b04a" : "#b8862a"}" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
+  }
+  // beads, leaving a gap at the bottom for the imam bead
+  for (let i = 0; i < 33; i++) {
+    const a = (90 + 8 + (i * (360 - 16)) / 32) * (Math.PI / 180);
+    const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+    const mark = i === 10 || i === 22; // the two separator beads of a 33 sebha
+    s += bead(x.toFixed(1), y.toFixed(1), mark ? 17 : 15, mark ? "m" : "b");
+  }
+  // imam bead (elongated) at the bottom
+  s += `<ellipse cx="${cx}" cy="${by + 3}" rx="14" ry="24" fill="rgba(0,0,0,0.28)"/><ellipse cx="${cx}" cy="${by}" rx="14" ry="24" fill="url(#b)"/><ellipse cx="${cx - 5}" cy="${by - 10}" rx="4" ry="7" fill="rgba(255,255,255,0.55)"/>`;
+  // centre: the logo, or a heart with a medical cross for healing
+  if (kind === "sick") {
+    s += `<g filter="url(#glow)" transform="translate(${cx - 100} ${cy - 104})">
+      <circle cx="100" cy="104" r="108" fill="rgba(255,255,255,0.07)" stroke="rgba(163,230,53,0.4)" stroke-width="2"/>
+      <defs><linearGradient id="h" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fb7185"/><stop offset="1" stop-color="#e11d48"/></linearGradient></defs>
+      <path fill="url(#h)" d="M100 172 C 58 142, 22 114, 22 78 C 22 52, 42 32, 67 32 C 82 32, 94 40, 100 52 C 106 40, 118 32, 133 32 C 158 32, 178 52, 178 78 C 178 114, 142 142, 100 172 Z"/>
+      <rect x="87" y="58" width="26" height="74" rx="5" fill="#fff"/><rect x="63" y="82" width="74" height="26" rx="5" fill="#fff"/>
+    </g>`;
+  } else {
+    s += `<circle cx="${cx}" cy="${cy}" r="132" fill="rgba(255,255,255,0.06)" stroke="rgba(226,176,74,0.35)" stroke-width="2"/>`;
+    s += `<image href="../../public/icons/icon-512.png" x="${cx - 112}" y="${cy - 112}" width="224" height="224" filter="url(#glow)"/>`;
+  }
+  document.getElementById("sebha").innerHTML = s;
 </script>
 </body>
 </html>

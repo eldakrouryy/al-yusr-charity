@@ -1,15 +1,20 @@
 import { useEffect, useRef } from "react";
 import { Undo2, X } from "lucide-react";
+import { StableText } from "@/components/misbaha/StableText";
+
+const TEXT = "text-2xl font-black leading-[1.7] sm:text-3xl";
 
 /**
  * Full-screen sebha: the whole screen is one big bead, so the visitor can count without looking
  * (after prayer, on the way to work). Keeps the screen awake while open where the browser allows it.
  */
 export function FocusMode({
-  isAr, text, next, shown, target, rounds, progress, done, today, onTap, onUndo, canUndo, onClose,
+  isAr, text, allTexts, next, shown, target, rounds, progress, done, today, onTap, onUndo, canUndo, onClose,
 }: {
   isAr: boolean;
   text: string;
+  /** every phrase that takes turns: the text box keeps the height of the longest */
+  allTexts: string[];
   next?: string | null;
   /** the number in the middle */
   shown: string;
@@ -95,7 +100,11 @@ export function FocusMode({
         onContextMenu={(e) => e.preventDefault()}
         aria-label={isAr ? `اضغط في أي مكان بعد أن تقول: ${text}. العدد ${shown}` : `Tap anywhere after saying: ${text}. Count ${shown}`}
       >
-        <span className="max-w-xl text-2xl font-black leading-[1.7] sm:text-3xl" aria-live="polite">{text}</span>
+        <span className="block w-full max-w-xl">
+          <StableText all={allTexts} className={TEXT}>
+            <span className={TEXT} aria-live="polite">{text}</span>
+          </StableText>
+        </span>
         {next && <span className="mt-2 max-w-full truncate text-sm font-bold text-white/50">{isAr ? `التالي: ${next}` : `Next: ${next}`}</span>}
         <span className={`mt-10 font-mono text-8xl font-black tabular-nums transition-transform ${done ? "scale-110 text-secondary" : ""}`}>{shown}</span>
         <span className="mt-2 text-base font-bold text-white/70">{target}</span>

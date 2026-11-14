@@ -7,8 +7,10 @@ import { kindMeta, roomTagline, roomTitle } from "@/data/memorialDuas";
 
 /** Top of a shared sebha page: whose it is, the intention, and the live shared total. */
 export function RoomHeader({
-  isAr, state, room, live, othersRecent, fmt,
+  isAr, state, room, live, othersRecent, mine = 0, fmt,
 }: {
+  /** what this visitor added today (kept on the device) */
+  mine?: number;
   isAr: boolean;
   state: "loading" | "ok" | "missing" | "pending" | "none";
   room: MisbahaRoom | null;
@@ -45,21 +47,26 @@ export function RoomHeader({
       <p className="mt-1.5 text-sm font-bold text-white/80 sm:mt-2 sm:text-base">{roomTagline(room.kind, room.gender, isAr)}</p>
 
       <div className="mx-auto mt-3 max-w-xs sm:mt-4">
-        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm font-bold text-white/80">
-          <Users className="h-4 w-4 shrink-0 text-secondary" />
-          <span><b className="font-mono text-lg font-black tabular-nums text-white" aria-live="polite">{fmt(room.total_count)}</b> {isAr ? "ذكر من جميع المشاركين" : "dhikr from everyone"}</span>
-          {live && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-secondary">
-              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-secondary opacity-60 motion-reduce:hidden" /><span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" /></span>
-              {isAr ? "مباشر" : "live"}
-            </span>
-          )}
-        </p>
+        {/* The shared total is the point of the page: big, with what this visitor added to it. */}
+        <div className="rounded-2xl bg-white/10 px-3 py-2">
+          <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5">
+            <Users className="hidden h-5 w-5 shrink-0 text-secondary sm:block" />
+            <b className="font-mono text-3xl font-black leading-none tabular-nums text-white" aria-live="polite">{fmt(room.total_count)}</b>
+            <span className="text-xs font-bold text-white/85">{isAr ? "ذكر قاله جميع المشاركين" : "dhikr by everyone"}</span>
+            {live && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-black text-secondary">
+                <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-secondary opacity-60 motion-reduce:hidden" /><span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" /></span>
+                {isAr ? "مباشر" : "live"}
+              </span>
+            )}
+          </p>
+          {mine > 0 && <p className="mt-0.5 text-[11px] font-black text-secondary">{isAr ? `منهم ${fmt(mine)} منك اليوم` : `${fmt(mine)} of them from you today`}</p>}
+        </div>
         {othersRecent > 0 && (
           <p className="misbaha-fade mt-1 text-xs font-black text-secondary">{isAr ? `+${fmt(othersRecent)} من مشاركين آخرين منذ أن فتحت الصفحة` : `+${fmt(othersRecent)} from others since you opened`}</p>
         )}
         {room.target_total ? (
-          <div className="mt-2">
+          <div className="mt-1.5">
             <div className="h-1.5 overflow-hidden rounded-full bg-white/15" role="progressbar" aria-valuemin={0} aria-valuemax={room.target_total} aria-valuenow={Math.min(room.total_count, room.target_total)}
               aria-label={isAr ? "التقدم نحو هدف السبحة" : "Progress to the goal"}>
               <div className="h-full rounded-full bg-secondary transition-[width] duration-500" style={{ width: `${pct}%` }} />
@@ -79,11 +86,13 @@ export function RoomHeader({
 
 /** Under the counter of a shared sebha: send it (WhatsApp first), story image, copy, add to home screen. */
 export function RoomShareActions({
-  isAr, room, waHref, copied, onCopy, onNativeShare, onStory,
+  isAr, room, wa, onWhatsapp, copied, onCopy, onNativeShare, onStory,
 }: {
   isAr: boolean;
   room: MisbahaRoom;
-  waHref: string;
+  /** from whatsappShare(): opens WhatsApp with the message already written */
+  wa: { href: string; target?: "_blank" };
+  onWhatsapp: () => void;
   copied: boolean;
   onCopy: () => void;
   onNativeShare: (() => void) | null;
@@ -93,7 +102,7 @@ export function RoomShareActions({
     <div id="room-share" className="mt-5 w-full max-w-md scroll-mt-24 text-center">
       <p className="mb-2 text-xs font-black text-white/70">{isAr ? "شارك السبحة، والدال على الخير كفاعله" : "Share it — whoever guides to good shares its reward"}</p>
       <div className="keep-flow grid grid-cols-2 gap-2">
-        <a href={waHref} target="_blank" rel="noopener noreferrer" className="col-span-2 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 text-sm font-black text-white shadow-cta transition hover:brightness-95">
+        <a href={wa.href} target={wa.target} onClick={onWhatsapp} rel="noopener noreferrer" className="col-span-2 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 text-sm font-black text-white shadow-cta transition hover:brightness-95">
           <WhatsAppIcon className="h-4 w-4" /> {isAr ? "أرسلها عبر واتساب" : "WhatsApp"}
         </a>
         <button type="button" onClick={onStory} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-secondary px-3 text-sm font-black text-slate-950 shadow-cta transition hover:-translate-y-0.5">

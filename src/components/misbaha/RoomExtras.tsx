@@ -6,6 +6,7 @@ import { WhatsAppIcon } from "@/components/common/icons/WhatsAppIcon";
 import type { MisbahaRoom } from "@/data/api/misbahaRoomsApi";
 import { roomDuas, roomShareText } from "@/data/memorialDuas";
 import { track } from "@/lib/track";
+import { whatsappFallback, whatsappShare } from "@/lib/whatsappShare";
 import { QuranReader } from "@/components/misbaha/QuranReader";
 import { READER_SURAHS } from "@/data/quranSurahs";
 
@@ -88,7 +89,7 @@ export function RoomExtras({ isAr, room, pageUrl }: { isAr: boolean; room: Misba
               <button type="button" onClick={() => copy("message", message)} className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-black text-primary-foreground">
                 {copiedId === "message" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copiedId === "message" ? (isAr ? "تم النسخ" : "Copied") : isAr ? "انسخ الرسالة" : "Copy message"}
               </button>
-              <a href={`https://wa.me/?text=${encodeURIComponent(message)}`} onClick={() => sent("whatsapp")} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp"
+              <a {...whatsappShare(message)} onClick={() => { sent("whatsapp"); whatsappFallback(message); }} rel="noopener noreferrer" aria-label="WhatsApp"
                 className="grid h-10 w-10 place-items-center rounded-xl bg-[#25D366] text-white"><WhatsAppIcon className="h-4 w-4" /></a>
               <a href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(pageUrl)}`} onClick={() => sent("facebook")} target="_blank" rel="noopener noreferrer" aria-label="Facebook"
                 className="grid h-10 w-10 place-items-center rounded-xl bg-[#1877F2] text-white"><Facebook className="h-4 w-4" /></a>

@@ -109,7 +109,7 @@ export function bindAnchorClickTracker() {
       const isMailto = href.startsWith("mailto:");
       const isTel = href.startsWith("tel:");
       const isHash = href.startsWith("#") || href.startsWith("/#");
-      const isWhatsapp = /wa\.me|api\.whatsapp\.com/.test(href);
+      const isWhatsapp = /wa\.me|api\.whatsapp\.com|^whatsapp:/.test(href);
 
       let kind: string = "internal";
       if (isMailto) kind = "mailto";
