@@ -14,12 +14,14 @@ import { usePaymentOptions, type PayoutDestination } from "@/data/paymentOptions
 import { errorReason } from "@/lib/notify";
 import { PhoneInput } from "@/components/common/PhoneInput";
 import { isValidPhoneValue } from "@/lib/phone";
+import { BankAccountSelect, PaymentMethodSelect, bankTitle } from "@/components/donate/PaymentPicker";
+import { composeDonationNotes, cleanDonorNote, DONOR_NOTE_MAX } from "@/lib/donorNote";
 
 type MethodId = "card_kashier" | "vodafone_cash" | "instapay" | "bank_transfer" | "delegate_pickup";
 
 /** How each method looks here; which ones are offered comes from the dashboard (usePaymentOptions). */
 const METHODS: { id: MethodId; ar: string; en: string; noteAr: string; noteEn: string; logo: string; manual: boolean; pickup?: boolean }[] = [
-  { id: "card_kashier", ar: "بطاقة بنكية أو محفظة", en: "Card or mobile wallet", noteAr: "دفع فوري عبر كاشير", noteEn: "Instant via Kashier", logo: "/images/payments/kashier.svg", manual: false },
+  { id: "card_kashier", ar: "بطاقة بنكية أو فيزا", en: "Bank card or Visa", noteAr: "فيزا / ماستركارد / ميزة", noteEn: "Visa / Mastercard / Meeza", logo: "/images/payments/visa.svg", manual: false },
   { id: "instapay", ar: "إنستاباي", en: "InstaPay", noteAr: "تحويل لحظي", noteEn: "Instant transfer", logo: "/images/payments/instapay.png", manual: true },
   { id: "vodafone_cash", ar: "فودافون كاش", en: "Vodafone Cash", noteAr: "تحويل للمحفظة", noteEn: "Wallet transfer", logo: "/images/payments/vodafone.svg", manual: true },
   { id: "bank_transfer", ar: "تحويل بنكي", en: "Bank transfer", noteAr: "حساب المؤسسة الرسمي", noteEn: "Official account", logo: "/images/payments/cib.svg", manual: true },
@@ -77,7 +79,7 @@ const CopyRow = ({ label, value, isAr }: { label: string; value: string; isAr: b
         type="button"
         onClick={onCopy}
         aria-label={isAr ? `نسخ ${label}` : `Copy ${label}`}
-        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-black transition-colors ${copied ? "bg-primary text-primary-foreground" : "bg-secondary/20 text-primary hover:bg-secondary/35"}`}
+        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-black transition-colors ${copied ? "bg-primary text-primary-foreground" : "bg-primary/15 text-primary hover:bg-primary hover:text-primary-foreground"}`}
       >
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         {copied ? (isAr ? "تم النسخ" : "Copied") : (isAr ? "نسخ" : "Copy")}
@@ -107,12 +109,19 @@ export const Donate = () => {
   /** Name optional (empty = «فاعل خير»); phone required so the team can confirm the donation. */
   const [donorName, setDonorName] = useState("");
   const [donorPhone, setDonorPhone] = useState("");
+  /** Optional note (shown on the donation in the dashboard; added to the WhatsApp message for transfers). */
+  const [donorNote, setDonorNote] = useState("");
+  /** Bank transfer with several accounts: the one the donor picked. */
+  const [bankIdx, setBankIdx] = useState(0);
   const [checkout, setCheckout] = useState<{ open: boolean; orderId: string; sessionUrl?: string }>({ open: false, orderId: "" });
   const idemKey = useRef(`quick-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const selected = offered.find((m) => m.id === method) ?? offered[0] ?? METHODS[0];
   /** Where to send a manual transfer (numbers / IPA / bank accounts come only from the dashboard). */
-  const destinations: PayoutDestination[] = options.find((o) => o.id === selected.id)?.destinations ?? [];
+  const allDestinations: PayoutDestination[] = options.find((o) => o.id === selected.id)?.destinations ?? [];
+  const isBank = selected.id === "bank_transfer";
+  const chosenBank = isBank ? allDestinations[Math.min(bankIdx, Math.max(0, allDestinations.length - 1))] : undefined;
+  const destinations: PayoutDestination[] = isBank ? (chosenBank ? [chosenBank] : []) : allDestinations;
   const valid = amount >= MIN_AMOUNT;
   const phoneOk = isValidPhoneValue(donorPhone);
   const fmt = (n: number) => n.toLocaleString(isAr ? "ar-EG" : "en-US");
@@ -128,7 +137,7 @@ export const Donate = () => {
     if (!valid || processing) return;
     if (selected.pickup) {
       trackDonationStarted({ amount, method, source: "home-quick" });
-      navigate(`/donate?amount=${amount}&method=delegate_pickup`);
+      navigate(`/donate?entity=general&amount=${amount}&method=delegate_pickup`, { state: { note: cleanDonorNote(donorNote) || undefined } });
       return;
     }
     if (!selected.manual && !phoneOk) return;
@@ -136,9 +145,11 @@ export const Donate = () => {
 
     if (selected.manual) {
       // The transfer details are shown right here; the donor sends the transfer receipt on WhatsApp.
+      const via = chosenBank ? `${isAr ? selected.ar : selected.en} (${bankTitle(chosenBank)})` : isAr ? selected.ar : selected.en;
+      const note = cleanDonorNote(donorNote);
       const msg = isAr
-        ? `السلام عليكم، حوّلت ${fmt(amount)} جنيه تبرعًا عامًّا عن طريق ${selected.ar}، ومرفق صورة التحويل.`
-        : `Hello, I transferred ${amount} EGP as a general donation via ${selected.en}. The transfer receipt is attached.`;
+        ? `السلام عليكم، حوّلت ${fmt(amount)} جنيه تبرعًا عامًّا عن طريق ${via}، ومرفق صورة التحويل.${note ? `\nملاحظاتي: ${note}` : ""}`
+        : `Hello, I transferred ${amount} EGP as a general donation via ${via}. The transfer receipt is attached.${note ? `\nNotes: ${note}` : ""}`;
       window.open(`https://wa.me/${ORG.whatsapp}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
       return;
     }
@@ -155,7 +166,7 @@ export const Donate = () => {
         category_id: String(GENERAL_PROGRAM_ID),
         payment_method: "kashier",
         payment_status: "pending",
-        message: "تبرع عام — تبرع سريع من الصفحة الرئيسية",
+        message: composeDonationNotes(["تبرع عام — تبرع سريع من الصفحة الرئيسية"], donorNote),
         idempotency_key: idemKey.current,
       });
       sessionUrl = res?.payment?.session_url;
@@ -204,7 +215,7 @@ export const Donate = () => {
       <div className="container relative mx-auto px-4">
         <div className="mx-auto max-w-3xl">
           <div className="text-center">
-            <p className="text-sm font-black text-secondary">{isAr ? "تبرع سريع" : "Quick donate"}</p>
+            <p className="text-sm font-black text-accent-glow">{isAr ? "تبرع سريع" : "Quick donate"}</p>
             <h2 className="mt-2 text-3xl font-black md:text-5xl">{t.donate.title}</h2>
             <p className="mt-3 text-primary-foreground/85">{t.donate.subtitle}</p>
           </div>
@@ -256,32 +267,32 @@ export const Donate = () => {
             {/* 2. Method */}
             <fieldset className="mt-7">
               <legend className="text-sm font-black text-primary">{isAr ? "٢. طريقة الدفع" : "2. Payment method"}</legend>
-              <div role="radiogroup" className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                {offered.map((m, i) => {
-                  const on = method === m.id;
-                  const lone = offered.length % 2 === 1 && i === offered.length - 1;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => setMethod(m.id)}
-                      className={`flex min-h-[60px] items-center gap-3 rounded-xl border-2 px-4 py-2.5 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${lone ? "sm:col-span-2 " : ""}${
-                        on ? "border-primary bg-primary/[0.04]" : "border-border hover:border-primary/40"
-                      }`}
-                    >
-                      <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${on ? "border-primary" : "border-muted-foreground/40"}`} aria-hidden>
-                        {on && <span className="h-2.5 w-2.5 rounded-full bg-primary" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-black text-primary">{isAr ? m.ar : m.en}</span>
-                        <span className="block text-xs text-muted-foreground">{isAr ? m.noteAr : m.noteEn}</span>
-                      </span>
-                      {m.pickup ? <Truck className="h-6 w-6 shrink-0 text-primary" aria-hidden /> : <img src={m.logo} alt="" className="h-6 w-auto max-w-[64px] shrink-0 object-contain" loading="lazy" />}
-                    </button>
-                  );
-                })}
+              <div className="mt-3">
+                <PaymentMethodSelect
+                  id="quick-method"
+                  isAr={isAr}
+                  value={selected.id}
+                  onChange={(id) => { setMethod(id as MethodId); setBankIdx(0); }}
+                  methods={offered.map((m) => {
+                    const dests = options.find((o) => o.id === m.id)?.destinations ?? [];
+                    return {
+                      id: m.id,
+                      label: isAr ? m.ar : m.en,
+                      note: m.id === "bank_transfer" && dests.length > 1
+                        ? (isAr ? `${dests.length} بنوك: ${dests.map(bankTitle).join("، ")}` : `${dests.length} banks`)
+                        : isAr ? m.noteAr : m.noteEn,
+                      iconKey: m.id === "bank_transfer" && dests.length === 1 && dests[0].bankCode ? `bank_${dests[0].bankCode}` : m.id,
+                    };
+                  })}
+                />
+                {isBank && allDestinations.length > 1 && (
+                  <div className="mt-2.5">
+                    <label htmlFor="quick-bank" className="mb-1 block text-xs font-bold text-muted-foreground">
+                      {isAr ? "اختر البنك الذي ستحوّل إليه" : "Bank to transfer to"}
+                    </label>
+                    <BankAccountSelect id="quick-bank" isAr={isAr} accounts={allDestinations} value={bankIdx} onChange={setBankIdx} />
+                  </div>
+                )}
               </div>
             </fieldset>
 
@@ -313,7 +324,7 @@ export const Donate = () => {
                 </div>
                 <p className="mt-2 text-center text-xs text-muted-foreground">
                   {isAr ? "تريد تسجيل بياناتك واختيار برنامج معيّن؟ " : "Want to register your details or pick a programme? "}
-                  <Link to={`/donate?${new URLSearchParams({ amount: String(amount), method, utm_source: "home", utm_medium: "quick_donate" }).toString()}`} className="font-bold text-primary underline underline-offset-2 hover:text-accent">
+                  <Link to={`/donate?${new URLSearchParams({ entity: "general", amount: String(amount), method, utm_source: "home", utm_medium: "quick_donate" }).toString()}`} className="font-bold text-primary underline underline-offset-2 hover:text-primary">
                     {isAr ? "أكمِل في صفحة التبرع" : "Continue on the donation page"}
                   </Link>
                 </p>
@@ -349,11 +360,30 @@ export const Donate = () => {
               </fieldset>
             )}
 
+            {/* Notes (optional) */}
+            {!selected.pickup && (
+              <div className="mt-7">
+                <label htmlFor="quick-note" className="flex items-center justify-between gap-2 text-sm font-black text-primary">
+                  <span>{isAr ? "ملاحظات (اختياري)" : "Notes (optional)"}</span>
+                  <span className="text-xs font-medium tabular-nums text-muted-foreground">{donorNote.length}/{DONOR_NOTE_MAX}</span>
+                </label>
+                <textarea
+                  id="quick-note"
+                  rows={2}
+                  maxLength={DONOR_NOTE_MAX}
+                  value={donorNote}
+                  onChange={(e) => setDonorNote(e.target.value)}
+                  placeholder={isAr ? "مثال: التبرع عن روح والدي" : "e.g. on behalf of a loved one"}
+                  className="mt-2 w-full resize-y rounded-xl border-2 border-border bg-background px-4 py-2.5 text-base font-bold transition-colors placeholder:font-medium placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none"
+                />
+              </div>
+            )}
+
             <button
               type="button"
               onClick={submit}
               disabled={!valid || processing || (!selected.manual && !selected.pickup && !phoneOk)}
-              className="mt-7 inline-flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-orange-grad text-base font-black text-accent-foreground shadow-cta transition-opacity hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-7 inline-flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-black text-primary-foreground shadow-soft transition-opacity hover:bg-primary-glow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {processing ? <Loader2 className="h-5 w-5 animate-spin" /> : selected.pickup ? <Truck className="h-5 w-5" /> : selected.manual ? <WhatsAppIcon className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
               {processing ? (isAr ? "جارٍ فتح بوابة الدفع..." : "Opening secure checkout...") : ctaLabel}
@@ -365,7 +395,7 @@ export const Donate = () => {
             </div>
             <p className="mt-3 text-center text-xs text-muted-foreground">
               {isAr ? "بإتمام التبرع فإنك توافق على " : "By donating you agree to the "}
-              <Link to="/terms#donations" className="font-bold text-primary underline underline-offset-2 hover:text-accent">
+              <Link to="/terms#donations" className="font-bold text-primary underline underline-offset-2 hover:text-primary">
                 {isAr ? "الشروط والأحكام" : "Terms & Conditions"}
               </Link>
             </p>

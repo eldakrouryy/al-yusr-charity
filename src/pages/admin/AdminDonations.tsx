@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DonationReceipt } from "@/components/common/DonationReceipt";
 import { DonationCard, DonationCardsState } from "@/components/admin/donations/DonationCard";
+import { splitDonationNotes } from "@/lib/donorNote";
+import { parseDonationLines } from "@/lib/donationLines";
 import { useLang } from "@/i18n/LangContext";
 import { toast } from "@/hooks/use-toast";
 import { DONATION_STATUS_TRANSITIONS, type DonationStatus } from "@/data/casesApi";
@@ -137,7 +139,12 @@ const AdminDonations = () => {
       createdAt: d.created_at,
       updatedAt: d.created_at,
       notes: d.notes || undefined,
-      items: [{ title: d.donation_package ? (isAr ? d.donation_package.name_ar : d.donation_package.name_en) || target : target, quantity: 1, amount: Number(d.amount) }],
+      items: (() => {
+        const lines = parseDonationLines(splitDonationNotes(d.notes).details);
+        return lines.length
+          ? lines.map((l) => ({ title: l.choice ? `${l.target} — ${l.choice}` : l.target, quantity: l.qty || 1, amount: l.amount }))
+          : [{ title: d.donation_package ? (isAr ? d.donation_package.name_ar : d.donation_package.name_en) || target : target, quantity: 1, amount: Number(d.amount) }];
+      })(),
     });
   };
 
@@ -352,7 +359,26 @@ const AdminDonations = () => {
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-black text-emerald-700 dark:text-emerald-400">{formatMoney(Number(d.amount), lang)}</td>
                       <td className="px-3 py-2.5 font-semibold">{donationMethodLabel(d, lang)}</td>
-                      <td className="max-w-[220px] truncate px-3 py-2.5" title={target}>{target}</td>
+                      <td className="max-w-[220px] px-3 py-2.5">
+                        <div className="truncate" title={target}>{target}</div>
+                        {(() => {
+                          const n = parseDonationLines(splitDonationNotes(d.notes).details).length;
+                          return n > 1 || d.payment_receipt ? (
+                            <div className="mt-0.5 flex flex-wrap gap-1 text-[10px] font-black">
+                              {n > 1 && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">{isAr ? `${n} بنود` : `${n} items`}</span>}
+                              {d.payment_receipt && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-primary">{isAr ? "إيصال مرفق" : "Receipt attached"}</span>}
+                            </div>
+                          ) : null;
+                        })()}
+                        {(() => {
+                          const note = splitDonationNotes(d.notes).donorNote;
+                          return note ? (
+                            <div className="mt-0.5 truncate text-[11px] font-bold text-muted-foreground" title={note}>
+                              <span className="text-accent">{isAr ? "ملاحظة: " : "Note: "}</span>{note}
+                            </div>
+                          ) : null;
+                        })()}
+                      </td>
                       <td className="px-3 py-2.5">
                         <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-black ${donationStatusTone(d.status, d.is_gateway)}`}>
                           {donationStatusLabel(d.status, d.is_gateway, lang)}

@@ -51,6 +51,10 @@ import { isValidPhoneValue } from "@/lib/phone";
 import { LoadingMark } from "@/components/common/LoadingMark";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EGYPT_GOVERNORATES } from "@/data/egyptGovernorates";
+import { Textarea } from "@/components/ui/textarea";
+import { BankAccountSelect, PaymentMethodSelect, bankTitle } from "@/components/donate/PaymentPicker";
+import { composeDonationNotes, DONOR_NOTE_MAX } from "@/lib/donorNote";
+import { encodeDonationLines, type DonationLine } from "@/lib/donationLines";
 
 type StaticMethod = {
   id: string;
@@ -82,8 +86,8 @@ const METHOD_LOOK: Record<string, Omit<StaticMethod, "id" | "ar" | "en" | "isMan
     instructions_ar: "افتح تطبيق InstaPay وأدخل العنوان الموضح لإتمام التحويل في ثوانٍ.", instructions_en: "Open InstaPay and enter the address shown." },
   bank_transfer: { subtitleAr: "تحويل بنكي مباشر", subtitleEn: "Direct Bank Transfer", icon: Landmark, badge: { ar: "تحويل بنكي", en: "Bank Transfer", color: "slate" },
     instructions_ar: "حوّل إلى حساب المؤسسة الموضح، وأرسل صورة إشعار التحويل للتأكيد.", instructions_en: "Transfer to the account shown and send the receipt." },
-  card_kashier: { subtitleAr: "كاشير (فيزا / ماستركارد / ميزة)", subtitleEn: "Kashier (Visa / Mastercard / Meeza)", icon: CreditCard, isGateway: true,
-    instructions_ar: "ستفتح نافذة الدفع المشفرة المعتمدة عبر بوابة كاشير (3D-Secure) لإتمام التبرع بأمان.", instructions_en: "Secure encrypted online payment via the Kashier gateway." },
+  card_kashier: { subtitleAr: "فيزا / ماستركارد / ميزة", subtitleEn: "Visa / Mastercard / Meeza", icon: CreditCard, isGateway: true,
+    instructions_ar: "ستفتح صفحة دفع آمنة ومشفّرة (3D-Secure) لإتمام التبرع ببطاقتك: فيزا أو ماستركارد أو ميزة.", instructions_en: "A secure, encrypted (3D-Secure) page opens to pay by Visa, Mastercard or Meeza." },
   delegate_pickup: { subtitleAr: "استلام منزلي مجاني", subtitleEn: "Free Doorstep Pickup", icon: Truck, badge: { ar: "استلام منزلي مجاني", en: "Free Home Pickup", color: "emerald" }, isDelegate: true,
     instructions_ar: "سيتواصل معك مندوبنا هاتفيًا لتحديد الموعد الأنسب واستلام التبرع بإيصال معتمد.", instructions_en: "Our delegate will call you to arrange a time and collect the donation with an official receipt." },
 };
@@ -178,16 +182,17 @@ const DonatePage = () => {
     params.get("amount"),
   ].join("|");
 
-  const initialEntity = linkedEntity || DONATION_ENTITIES[0];
-  const initialMode = initialEntity.isMarkoun ? "in_kind" : "general";
-  const initialAmount = Number(params.get("amount")) || (initialMode === "in_kind" ? 0 : initialEntity.priceFrom || 100);
+  // No target in the link: no program is chosen yet (the form never assumes «تبرع عام»).
+  const initialEntity = linkedEntity;
+  const initialMode = initialEntity?.isMarkoun ? "in_kind" : initialEntity && initialEntity.shares.length > 0 && !Number(params.get("amount")) ? "shares" : "general";
+  const initialAmount = !initialEntity || initialMode !== "general" ? 0 : Number(params.get("amount")) || initialEntity.priceFrom || 100;
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [initializedLinkKey, setInitializedLinkKey] = useState<string | null>(hasLinkTarget ? "" : null);
   const [items, setItems] = useState<DonationItemState[]>([
     {
       id: "item-init",
-      entityId: initialEntity.id,
+      entityId: initialEntity?.id ?? "",
       donationMode: initialMode,
       amount: initialAmount,
       selectedShares: {},
@@ -225,11 +230,11 @@ const DonatePage = () => {
     // ?package=<backend package id | share id>: open the form on that share.
     const pkgParam = params.get("package");
     const share = pkgParam ? linkedEntity.shares.find((s) => String(s.apiId) === pkgParam || s.id === pkgParam) : undefined;
-    const defMode = linkedEntity.isMarkoun ? "in_kind" : share ? "shares" : "general";
     const paramAmt = Number(params.get("amount"));
+    const defMode = linkedEntity.isMarkoun ? "in_kind" : share || (linkedEntity.shares.length > 0 && !(paramAmt > 0)) ? "shares" : "general";
     // ?qty=<n> (with ?package=): open the form with n of that share (1–99).
     const qty = share ? Math.min(99, Math.max(1, Math.floor(Number(params.get("qty")) || 1))) : 1;
-    const defAmount = share ? share.price * qty : paramAmt > 0 ? paramAmt : (defMode === "in_kind" ? 0 : linkedEntity.priceFrom || 100);
+    const defAmount = share ? share.price * qty : defMode !== "general" ? 0 : paramAmt > 0 ? paramAmt : linkedEntity.priceFrom || 100;
     setItems([
       {
         id: "item-init",
@@ -258,16 +263,13 @@ const DonatePage = () => {
       return;
     }
     basketEditedRef.current = true;
-    const existing = new Set(items.map((i) => i.entityId));
-    const nextEnt = DONATION_ENTITIES.find((p) => !existing.has(p.id) && !p.isMarkoun) || DONATION_ENTITIES[0];
-    const defaultAmt = nextEnt.priceFrom && nextEnt.priceFrom > 0 ? nextEnt.priceFrom : 100;
     setItems((prev) => [
       ...prev,
       {
         id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        entityId: nextEnt.id,
+        entityId: "",
         donationMode: "general",
-        amount: defaultAmt,
+        amount: 0,
         selectedShares: {},
         selectedCaseId: null,
       },
@@ -295,7 +297,8 @@ const DonatePage = () => {
   const [method, setMethod] = useState<string>(() => params.get("method") || "");
 
   // Donor details arrive via router state (never the URL, so they stay out of history and analytics).
-  const prefill = (useLocation().state as { donor?: { name?: string; phone?: string; email?: string } } | null)?.donor;
+  const navState = useLocation().state as { donor?: { name?: string; phone?: string; email?: string }; note?: string } | null;
+  const prefill = navState?.donor;
   const [donor, setDonor] = useState({
     name:  prefill?.name  || "",
     email: prefill?.email || "",
@@ -332,22 +335,22 @@ const DonatePage = () => {
             particleCount: 90,
             spread: 70,
             origin: { y: 0.55 },
-            colors: ["#cbfb43", "#15803d", "#f97316", "#eab308", "#10b981"],
+            colors: ["#f97316", "#15803d", "#f97316", "#eab308", "#10b981"],
           });
           // Side bursts
           setTimeout(() => {
-            confetti({ particleCount: 60, angle: 60, spread: 60, origin: { x: 0 }, colors: ["#cbfb43", "#15803d", "#f97316"] });
-            confetti({ particleCount: 60, angle: 120, spread: 60, origin: { x: 1 }, colors: ["#cbfb43", "#15803d", "#f97316"] });
+            confetti({ particleCount: 60, angle: 60, spread: 60, origin: { x: 0 }, colors: ["#f97316", "#15803d", "#f97316"] });
+            confetti({ particleCount: 60, angle: 120, spread: 60, origin: { x: 1 }, colors: ["#f97316", "#15803d", "#f97316"] });
           }, 300);
           // Lingering gentle trickle
           setTimeout(() => {
-            confetti({ particleCount: 30, spread: 50, origin: { y: 0.4 }, colors: ["#cbfb43", "#22c55e", "#eab308"] });
+            confetti({ particleCount: 30, spread: 50, origin: { y: 0.4 }, colors: ["#f97316", "#22c55e", "#eab308"] });
           }, 800);
           setTimeout(() => {
-            confetti({ particleCount: 20, spread: 40, origin: { y: 0.5 }, colors: ["#cbfb43", "#10b981"] });
+            confetti({ particleCount: 20, spread: 40, origin: { y: 0.5 }, colors: ["#f97316", "#10b981"] });
           }, 1400);
           setTimeout(() => {
-            confetti({ particleCount: 15, spread: 35, origin: { y: 0.6 }, colors: ["#cbfb43", "#22c55e"] });
+            confetti({ particleCount: 15, spread: 35, origin: { y: 0.6 }, colors: ["#f97316", "#22c55e"] });
           }, 2000);
         } catch {
           // ignore if canvas-confetti fails
@@ -385,6 +388,8 @@ const DonatePage = () => {
 
   const [receiptDataUrl, setReceiptDataUrl]   = useState<string>("");
   const [receiptFilename, setReceiptFilename] = useState<string>("");
+  /** The transfer receipt itself, sent with the donation (shown on it in the dashboard). */
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
   const idemKey = useRef<string>(
     (typeof crypto !== "undefined" && "randomUUID" in crypto)
@@ -457,6 +462,15 @@ const DonatePage = () => {
   const isManualMethod   = selectedMethod.isManual;
   const isBank           = method.includes("bank");
 
+  /** Optional note from the donor (shown on the donation in the dashboard). */
+  const [donorNote, setDonorNote] = useState(() => navState?.note || "");
+  /** Bank transfer with several accounts: which one the donor transfers to (index in destinations). */
+  const [bankIdx, setBankIdx] = useState(0);
+  const bankAccounts = isBank ? selectedMethod.destinations ?? [] : [];
+  const chosenBank = bankAccounts[Math.min(bankIdx, Math.max(0, bankAccounts.length - 1))];
+  /** Where the donor sends the money: the chosen bank account only, or every number of a wallet / IPA. */
+  const shownDestinations = isBank ? (chosenBank ? [chosenBank] : []) : selectedMethod.destinations ?? [];
+
   const [methodFields, setMethodFields] = useState({
     vodafonePhone: "", instapayHandle: "", bankRef: "",
     pickupAddress: "", pickupCity: "", pickupTime: "", pickupGovernorate: "الدقهلية",
@@ -509,6 +523,38 @@ const DonatePage = () => {
       })
       .join(" + ");
   }, [items, lang, DONATION_ENTITIES]);
+
+  /**
+   * What the donation is made of, one line per thing given (like the products of an order), always in
+   * Arabic for the dashboard: «حملة ستر — سقف منزل = 3000», «كفالة يتيم — كفالة شهرية ×2 = 1200».
+   */
+  const donationLines = useMemo<DonationLine[]>(() => {
+    const out: DonationLine[] = [];
+    for (const it of items) {
+      const ent = DONATION_ENTITIES.find((x) => x.id === it.entityId);
+      if (!ent) continue;
+      if (it.donationMode === "case" && it.selectedCaseId) {
+        const cs = ent.cases.find((c) => c.id === it.selectedCaseId);
+        out.push({
+          target: cs ? `${cs.titleAr} (#${cs.refCode})` : ent.ar,
+          choice: ent.id !== "general" ? `حالة إنسانية — ${ent.ar}` : "حالة إنسانية",
+          amount: Number(it.amount) || 0,
+        });
+      } else if (it.donationMode === "shares") {
+        for (const [sId, count] of Object.entries(it.selectedShares || {})) {
+          if (!count) continue;
+          const s = ent.shares.find((x) => x.id === sId);
+          out.push({ target: ent.ar, choice: s?.nameAr || sId, qty: count, amount: (s?.price || 0) * count });
+        }
+      } else if (it.donationMode === "in_kind") {
+        out.push({ target: ent.ar, choice: it.inKindCategory ? `تبرع عيني: ${it.inKindCategory}` : "تبرع عيني", amount: 0 });
+      } else {
+        out.push({ target: ent.ar, choice: ent.id === "general" ? undefined : "تبرع عام", amount: Number(it.amount) || 0 });
+      }
+    }
+    return out;
+  }, [items, DONATION_ENTITIES]);
+  const linesNote = encodeDonationLines(donationLines);
 
   /** The case an item donates to (a case item), with the entity it belongs to. */
   const caseOfItem = useCallback((it: DonationItemState) => {
@@ -580,6 +626,18 @@ const DonatePage = () => {
       }
 
       items.forEach((it, idx) => {
+        if (!it.entityId) {
+          errs[`amount_${it.id}`] = lang === "ar"
+            ? `اختر البرنامج أو المشروع أو الحملة للبند رقم (${idx + 1})`
+            : `Choose a program, project or campaign for item #${idx + 1}`;
+          return;
+        }
+        if (it.donationMode === "shares" && !Object.values(it.selectedShares).some((n) => n > 0)) {
+          errs[`amount_${it.id}`] = lang === "ar"
+            ? `اختر باقة للبند رقم (${idx + 1})، أو اختر «تبرع عام» واكتب المبلغ`
+            : `Pick a package for item #${idx + 1}, or choose a general donation`;
+          return;
+        }
         if (it.donationMode !== "in_kind" && (!it.amount || it.amount < 10)) {
           errs[`amount_${it.id}`] =
             lang === "ar"
@@ -675,12 +733,14 @@ const DonatePage = () => {
               donor_phone: donor.phone,
               payment_method: method,
               payment_status: "pending",
-              message: [
+              message: composeDonationNotes([
                 caseTitle ? `Case: ${caseTitle}` : "",
-                `Programs: ${itemsBreakdownText}`,
+                linesNote,
+                isBank && chosenBank ? `Bank: ${bankTitle(chosenBank)} (${chosenBank.value})` : "",
                 isDelegatePickup ? `Pickup: ${methodFields.pickupCity} - ${methodFields.pickupAddress}` : "",
-              ].filter(Boolean).join(" | ") || undefined,
+              ], donorNote) || undefined,
               idempotency_key: idemKey.current,
+              receiptFile: !isDelegatePickup ? receiptFile : null,
               pickup: isDelegatePickup
                 ? {
                     governorate: methodFields.pickupGovernorate,
@@ -729,7 +789,7 @@ const DonatePage = () => {
       }, 1200);
       return () => clearTimeout(tm);
     }
-  }, [step, record, lang, donor, totalAmount, items, programLabel, itemsBreakdownText, method, receiptDataUrl, receiptFilename, caseId, caseTitle, isDelegatePickup, methodFields.pickupCity, methodFields.pickupAddress]);
+  }, [step, record, lang, donor, totalAmount, items, programLabel, itemsBreakdownText, linesNote, method, receiptDataUrl, receiptFilename, receiptFile, caseId, caseTitle, isDelegatePickup, methodFields.pickupCity, methodFields.pickupAddress]);
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -738,7 +798,17 @@ const DonatePage = () => {
 
   const onReceiptUpload = (file?: File) => {
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) { toast({ title: "Max 4MB" }); return; }
+    // What the server accepts (StoreDonationRequest: jpg, png, webp, pdf up to 5 MB).
+    const okType = /^(image\/(jpe?g|png|webp)|application\/pdf)$/i.test(file.type) || /\.(jpe?g|png|webp|pdf)$/i.test(file.name);
+    if (!okType) {
+      toast({ title: lang === "ar" ? "نوع الملف غير مدعوم" : "Unsupported file", description: lang === "ar" ? "ارفع صورة JPG أو PNG أو ملف PDF." : "Upload a JPG, PNG or PDF.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: lang === "ar" ? "الملف أكبر من 5 ميجا" : "Max 5 MB", variant: "destructive" });
+      return;
+    }
+    setReceiptFile(file);
     const reader = new FileReader();
     reader.onload = () => { setReceiptDataUrl(String(reader.result || "")); setReceiptFilename(file.name); };
     reader.readAsDataURL(file);
@@ -782,13 +852,14 @@ const DonatePage = () => {
           selected={primaryItem.entityId}
           onSelect={(slug) => {
             const ent = DONATION_ENTITIES.find((x) => x.id === slug) || DONATION_ENTITIES[0];
-            const defMode = ent.isMarkoun ? "in_kind" : "general";
+            // A program with packages opens on its packages (none picked); the donor may switch to «تبرع عام».
+            const defMode = ent.isMarkoun ? "in_kind" : ent.shares.length > 0 ? "shares" : "general";
             setItems([
               {
                 id: `item-${Date.now()}`,
                 entityId: ent.id,
                 donationMode: defMode,
-                amount: defMode === "in_kind" ? 0 : (items[0]?.amount && items[0].amount >= 50 ? items[0].amount : ent.priceFrom || 100),
+                amount: defMode !== "general" ? 0 : (items[0]?.amount && items[0].amount >= 50 ? items[0].amount : ent.priceFrom || 100),
                 selectedShares: {},
                 selectedCaseId: null,
               },
@@ -829,10 +900,10 @@ const DonatePage = () => {
               { num: 3, labelAr: "التأكيد والإيصال", labelEn: "Receipt" },
             ].map((s, i) => (
               <div key={s.num} className="flex items-center gap-2">
-                {i > 0 && <div className={`h-0.5 w-6 sm:w-16 md:w-24 lg:w-32 transition-all ${step >= s.num ? "bg-secondary" : "bg-primary-foreground/15"}`} />}
+                {i > 0 && <div className={`h-0.5 w-6 sm:w-16 md:w-24 lg:w-32 transition-all ${step >= s.num ? "bg-accent" : "bg-primary-foreground/15"}`} />}
                 <div className="flex items-center gap-1.5">
                   <div className={`grid h-7 w-7 sm:h-8 sm:w-8 shrink-0 place-items-center rounded-full text-xs font-black transition ${
-                    step >= s.num ? "bg-secondary text-slate-950 font-black shadow-cta" : "bg-primary-foreground/15 text-primary-foreground/60"
+                    step >= s.num ? "bg-accent text-accent-foreground font-black shadow-cta" : "bg-primary-foreground/15 text-primary-foreground/60"
                   }`}>
                     {s.num}
                   </div>
@@ -853,8 +924,8 @@ const DonatePage = () => {
             ref={formTopRef}
             className="-mt-36 sm:-mt-44 md:-mt-52 relative z-20 rounded-3xl bg-card p-4 sm:p-7 md:p-9 lg:p-12 scroll-mt-24 shadow-2xl"
             style={{
-              boxShadow: "0 12px 48px -6px rgba(0,0,0,0.28), 0 0 0 1px rgba(203,251,67,0.22)",
-              border: "1.5px solid rgba(203,251,67,0.25)",
+              boxShadow: "0 12px 48px -6px rgba(0,0,0,0.28), 0 0 0 1px hsl(152 65% 18% / 0.10)",
+              border: "1.5px solid hsl(152 65% 18% / 0.12)",
             }}
           >
 
@@ -862,7 +933,7 @@ const DonatePage = () => {
             {step === 1 && (
               <div className="space-y-4 sm:space-y-5">
                 <div className="text-center sm:text-start border-b border-border/40 pb-3 sm:pb-4">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-0.5 text-xs font-black text-slate-950 shadow-2xs mb-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-0.5 text-xs font-black text-primary-foreground shadow-2xs mb-1">
                     {lang === "ar" ? "الخطوة الأولى" : "Step 1"}
                   </span>
                   <h2 tabIndex={-1} className="text-lg sm:text-xl font-black text-primary md:text-2xl outline-none">
@@ -880,13 +951,13 @@ const DonatePage = () => {
                   const loc = "en-US"; // the site writes amounts in Latin digits
                   const inBasket = !!activeCase;
                   return (
-                    <div className="rounded-2xl border border-accent/30 bg-gradient-to-l from-accent/[0.07] to-transparent p-3 sm:p-4">
+                    <div className="rounded-2xl border border-primary/30 bg-gradient-to-l from-primary/[0.07] to-transparent p-3 sm:p-4">
                       <div className="flex items-center gap-3">
                         {pageCase.cover_image_url && (
                           <img src={pageCase.cover_image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover sm:h-16 sm:w-16" loading="lazy" decoding="async" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-extrabold text-accent">
+                          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-extrabold text-primary">
                             <Heart className="h-3.5 w-3.5" />
                             {lang === "ar" ? "تبرعك لحالة محددة" : "Donating to a specific case"}
                             <span className="font-mono text-[10.5px] font-bold text-muted-foreground" dir="ltr">#{pageCase.ref_code}</span>
@@ -898,14 +969,14 @@ const DonatePage = () => {
                             </p>
                           )}
                         </div>
-                        <Link to={`/cases/${pageCase.ref_code}`} className="hidden shrink-0 rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-black text-primary transition hover:border-secondary sm:inline-flex">
+                        <Link to={`/cases/${pageCase.ref_code}`} className="hidden shrink-0 rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-black text-primary transition hover:border-primary sm:inline-flex">
                           {lang === "ar" ? "تفاصيل الحالة" : "Case details"}
                         </Link>
                       </div>
                       {f.need > 0 && (
                         <div className="mt-3">
                           <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                            <div className="h-full rounded-full bg-secondary" style={{ width: `${f.pct}%` }} />
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${f.pct}%` }} />
                           </div>
                           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] font-bold text-muted-foreground">
                             <span>
@@ -914,9 +985,9 @@ const DonatePage = () => {
                                 : `${f.raised.toLocaleString(loc)} of ${f.need.toLocaleString(loc)} EGP (${f.pct}%)`}
                             </span>
                             {f.done ? (
-                              <span className="font-black text-secondary">{lang === "ar" ? "اكتملت الحالة، والحمد لله. يمكنك التبرع لحالة أخرى" : "Fully funded — pick another case"}</span>
+                              <span className="font-black text-primary">{lang === "ar" ? "اكتملت الحالة، والحمد لله. يمكنك التبرع لحالة أخرى" : "Fully funded — pick another case"}</span>
                             ) : (
-                              <span className="font-black text-accent">
+                              <span className="font-black text-primary">
                                 {lang === "ar" ? `المتبقي ${f.remaining.toLocaleString(loc)} ج` : `${f.remaining.toLocaleString(loc)} EGP left`}
                               </span>
                             )}
@@ -968,9 +1039,9 @@ const DonatePage = () => {
                       size="sm"
                       onClick={addItem}
                       disabled={items.length >= MAX_BASKET_ITEMS}
-                      className="h-10 px-4 rounded-xl border-2 border-dashed border-primary/25 hover:border-secondary hover:bg-secondary/10 text-primary hover:text-primary font-black text-xs cursor-pointer shadow-xs transition-all w-full sm:w-auto flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-10 px-4 rounded-xl border-2 border-dashed border-primary/25 hover:border-primary hover:bg-primary/10 text-primary hover:text-primary/75 font-black text-xs cursor-pointer shadow-xs transition-all w-full sm:w-auto flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <div className="grid h-5 w-5 place-items-center rounded-full bg-secondary text-slate-950 font-black text-xs">
+                      <div className="grid h-5 w-5 place-items-center rounded-full bg-primary text-primary-foreground font-black text-xs">
                         +
                       </div>
                       <span>
@@ -984,7 +1055,7 @@ const DonatePage = () => {
                       <span className="text-xs font-bold text-muted-foreground">
                         {lang === "ar" ? "إجمالي التبرع:" : "Total Amount:"}
                       </span>
-                      <span className="inline-block bg-secondary text-slate-950 px-2.5 py-0.5 rounded-lg text-sm sm:text-base font-black shadow-xs">
+                      <span className="inline-block bg-primary text-primary-foreground px-2.5 py-0.5 rounded-lg text-sm sm:text-base font-black shadow-xs">
                         {totalAmount.toLocaleString()} {lang === "ar" ? "ج.م" : "EGP"}
                       </span>
                       {items.length > 1 && (
@@ -996,8 +1067,8 @@ const DonatePage = () => {
                   </div>
 
                   {items.length > 1 && !donationTarget && (
-                    <div className="flex items-start gap-2 rounded-xl border border-secondary/40 bg-secondary/[0.07] p-3 text-[11.5px] font-bold leading-6 text-primary">
-                      <Layers className="mt-1 h-3.5 w-3.5 shrink-0 text-secondary" />
+                    <div className="flex items-start gap-2 rounded-xl border border-primary/40 bg-primary/[0.07] p-3 text-[11.5px] font-bold leading-6 text-primary">
+                      <Layers className="mt-1 h-3.5 w-3.5 shrink-0 text-primary" />
                       <p>
                         {lang === "ar"
                           ? "في سلتك أكثر من بند: ستدفع مرة واحدة، ويُسجَّل التوزيع الذي اخترته مع التبرع كما هو ويُوزَّع وفقه."
@@ -1033,11 +1104,11 @@ const DonatePage = () => {
                       </span>
                     </div>
                     {user ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-black bg-secondary text-slate-950 px-2.5 py-0.5 rounded-full shadow-2xs shrink-0">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black bg-primary text-primary-foreground px-2.5 py-0.5 rounded-full shadow-2xs shrink-0">
                         {lang === "ar" ? "تم تسجيل الدخول ✓" : "Logged In ✓"}
                       </span>
                     ) : (
-                      <Link to="/auth/login" className="inline-flex items-center gap-1 text-[11px] font-bold text-accent hover:underline shrink-0">
+                      <Link to="/auth/login" className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline shrink-0">
                         <LogIn className="h-3 w-3" />
                         {lang === "ar" ? "سجّل الدخول لتتبع تبرعاتك" : "Login to track"}
                       </Link>
@@ -1058,7 +1129,7 @@ const DonatePage = () => {
                           if (fieldErrors.name) setFieldErrors((p) => ({ ...p, name: "" }));
                         }}
                         placeholder={lang === "ar" ? "اتركه فارغًا للتبرع كفاعل خير" : "Leave empty to give anonymously"}
-                        className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                        className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-primary focus:ring-2 focus:ring-primary/20"
                       />
                       {fieldErrors.name && (
                         <p className="mt-1 text-xs font-bold text-destructive">{fieldErrors.name}</p>
@@ -1097,11 +1168,27 @@ const DonatePage = () => {
                           if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: "" }));
                         }}
                         placeholder="name@example.com"
-                        className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                        className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-primary focus:ring-2 focus:ring-primary/20"
                       />
                       {fieldErrors.email && (
                         <p className="mt-1 text-xs font-bold text-destructive">{fieldErrors.email}</p>
                       )}
+                    </div>
+
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <label htmlFor="donor-note" className="flex items-center justify-between gap-2 text-xs font-bold text-muted-foreground mb-1">
+                        <span>{lang === "ar" ? "ملاحظات (اختياري)" : "Notes (optional)"}</span>
+                        <span className="font-medium tabular-nums">{donorNote.length}/{DONOR_NOTE_MAX}</span>
+                      </label>
+                      <Textarea
+                        id="donor-note"
+                        rows={2}
+                        maxLength={DONOR_NOTE_MAX}
+                        value={donorNote}
+                        onChange={(e) => setDonorNote(e.target.value)}
+                        placeholder={lang === "ar" ? "مثال: التبرع عن روح والدي، أو أفضل وقت للتواصل معك" : "e.g. on behalf of a loved one, or the best time to reach you"}
+                        className="min-h-[64px] rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
                     </div>
                   </div>
                 </div>
@@ -1118,7 +1205,7 @@ const DonatePage = () => {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="h-full w-full grid place-items-center bg-secondary text-slate-950 font-black text-xs">
+                          <div className="h-full w-full grid place-items-center bg-primary text-primary-foreground font-black text-xs">
                             {selectedProgram.ar.slice(0, 2)}
                           </div>
                         )}
@@ -1137,7 +1224,7 @@ const DonatePage = () => {
                       <span className="text-[10.5px] block font-bold text-muted-foreground">
                         {lang === "ar" ? "المبلغ الكلي" : "Total"}
                       </span>
-                      <span className="inline-block bg-secondary text-slate-950 px-2.5 py-0.5 rounded-lg text-xs sm:text-sm font-black shadow-xs">
+                      <span className="inline-block bg-primary text-primary-foreground px-2.5 py-0.5 rounded-lg text-xs sm:text-sm font-black shadow-xs">
                         {(totalAmount || 0).toLocaleString()} {lang === "ar" ? "ج.م" : "EGP"}
                       </span>
                     </div>
@@ -1196,7 +1283,7 @@ const DonatePage = () => {
                       if (Object.values(errs).some(Boolean)) return;
                       setStep(2);
                     }}
-                    className="w-full bg-orange-grad px-6 sm:px-9 h-11 sm:h-12 text-accent-foreground shadow-cta hover:opacity-95 rounded-xl font-black text-sm sm:text-base cursor-pointer flex items-center justify-center shrink-0"
+                    className="w-full bg-primary px-6 sm:px-9 h-11 sm:h-12 text-primary-foreground shadow-soft hover:bg-primary-glow rounded-xl font-black text-sm sm:text-base cursor-pointer flex items-center justify-center shrink-0"
                   >
                     {lang === "ar" ? "المتابعة لاختيار طريقة الدفع" : "Continue to Payment"} <Arrow className="h-4 w-4 sm:h-5 sm:w-5 ms-2" />
                   </Button>
@@ -1212,7 +1299,7 @@ const DonatePage = () => {
                 {/* Header & Mini Summary of Step 1 */}
                 <div className="text-center sm:text-start flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 border-b border-border/40 pb-3 sm:pb-4">
                   <div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary/15 px-2.5 py-0.5 text-xs font-black text-secondary border border-secondary/25 mb-1">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-black text-primary border border-primary/25 mb-1">
                       {lang === "ar" ? "الخطوة الثانية" : "Step 2"}
                     </span>
                     <h2 tabIndex={-1} className="text-lg sm:text-xl font-black text-primary md:text-2xl outline-none">
@@ -1224,7 +1311,7 @@ const DonatePage = () => {
                   </div>
 
                   {/* Step 1 recap pill with Edit button on same row */}
-                  <div className="flex items-center justify-between gap-2.5 rounded-xl border border-secondary/25 bg-secondary/[0.07] px-3 py-1.5 text-xs font-bold text-primary w-full sm:w-auto shadow-2xs">
+                  <div className="flex items-center justify-between gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.07] px-3 py-1.5 text-xs font-bold text-primary w-full sm:w-auto shadow-2xs">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="h-7 w-7 rounded-lg overflow-hidden border border-border/70 shrink-0 bg-muted">
                         {summaryImage ? (
@@ -1238,7 +1325,7 @@ const DonatePage = () => {
                       <div className="flex items-center gap-1.5 min-w-0 text-start truncate">
                         <span className="font-black text-primary text-xs truncate">{programLabel}</span>
                         <span className="text-muted-foreground/40">•</span>
-                        <span className="text-secondary font-black text-xs whitespace-nowrap">
+                        <span className="text-primary font-black text-xs whitespace-nowrap">
                           {totalAmount.toLocaleString()} {lang === "ar" ? "ج.م" : "EGP"}
                         </span>
                         {donor.name && (
@@ -1254,7 +1341,7 @@ const DonatePage = () => {
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="inline-flex items-center gap-1 text-accent hover:text-accent/80 font-black text-xs cursor-pointer shrink-0 ms-2 px-2.5 py-1 rounded-lg bg-accent/10 hover:bg-accent/20 border border-accent/25 transition-all shadow-2xs"
+                      className="inline-flex items-center gap-1 text-primary hover:text-primary/75/80 font-black text-xs cursor-pointer shrink-0 ms-2 px-2.5 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/25 transition-all shadow-2xs"
                     >
                       <Pencil className="h-3 w-3" />
                       <span>{lang === "ar" ? "تعديل" : "Edit"}</span>
@@ -1273,65 +1360,38 @@ const DonatePage = () => {
                     </span>
                   </div>
 
-                  {/* Payment Methods — responsive grid matching header width */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-2.5">
-                    {availableMethods.map((m, idx) => {
-                      const isSelected = method === m.id;
-                      // Last item in odd-total list gets full width on 2-col layout only
-                      const isLast = idx === availableMethods.length - 1;
-                      const oddTotal = availableMethods.length % 2 !== 0;
-                      const fullWidth = isLast && oddTotal;
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => setMethod(m.id)}
-                          className={`group relative flex items-center gap-2 rounded-2xl border-2 p-2.5 text-start transition-all duration-200 cursor-pointer outline-none select-none ${
-                            fullWidth ? "col-span-2 sm:col-span-1 lg:col-span-1" : ""
-                          } ${
-                            isSelected
-                              ? "border-secondary bg-secondary/[0.08] shadow-xs ring-2 ring-secondary/20"
-                              : "border-border/70 bg-card hover:border-secondary/40 hover:bg-muted/30"
-                          }`}
-                        >
-                          {/* Radio Checkmark Circle */}
-                          <div
-                            className={`grid h-4.5 w-4.5 shrink-0 place-items-center rounded-full border-2 transition-all ${
-                              isSelected
-                                ? "border-secondary bg-secondary text-slate-950 shadow-xs"
-                                : "border-muted-foreground/35 bg-card group-hover:border-secondary/60"
-                            }`}
-                          >
-                            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3] text-slate-950" />}
-                          </div>
-
-                          {/* Standardized Logo Box */}
-                          <div className="flex h-8 min-w-[48px] px-1.5 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-card border border-border/80 shadow-2xs overflow-hidden">
-                            <PaymentBrandIcon methodKey={m.destinations?.[0]?.bankCode ? `bank_${m.destinations[0].bankCode}` : m.id} className="h-5 w-auto max-w-full object-contain" />
-                          </div>
-
-                          {/* Title & Concise Subtitle */}
-                          <div className="flex-1 min-w-0">
-                            <span className="text-[11px] sm:text-xs font-black text-primary truncate block leading-tight">
-                              {lang === "ar" ? m.ar : m.en}
-                            </span>
-                            <p className="text-[10px] sm:text-[10.5px] text-muted-foreground truncate mt-0.5 font-medium">
-                              {lang === "ar" ? m.subtitleAr : m.subtitleEn}
-                            </p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {/* Payment method as a dropdown (saves the space of a grid of cards) */}
+                  <PaymentMethodSelect
+                    id="donate-method"
+                    isAr={lang === "ar"}
+                    value={selectedMethod.id}
+                    onChange={(id) => { setMethod(id); setBankIdx(0); }}
+                    methods={availableMethods.map((m) => ({
+                      id: m.id,
+                      label: lang === "ar" ? m.ar : m.en,
+                      note: m.id === "bank_transfer" && (m.destinations?.length ?? 0) > 1
+                        ? (lang === "ar" ? `${m.destinations!.length} بنوك: ${m.destinations!.map(bankTitle).join("، ")}` : `${m.destinations!.length} banks`)
+                        : lang === "ar" ? m.subtitleAr : m.subtitleEn,
+                      iconKey: m.destinations?.length === 1 && m.destinations[0].bankCode ? `bank_${m.destinations[0].bankCode}` : m.id,
+                    }))}
+                  />
+                  {bankAccounts.length > 1 && (
+                    <div className="mt-2.5">
+                      <label htmlFor="donate-bank" className="mb-1 block text-xs font-bold text-muted-foreground">
+                        {lang === "ar" ? "اختر البنك الذي ستحوّل إليه" : "Bank to transfer to"}
+                      </label>
+                      <BankAccountSelect id="donate-bank" isAr={lang === "ar"} accounts={bankAccounts} value={bankIdx} onChange={setBankIdx} />
+                    </div>
+                  )}
                 </div>
 
                 {/* Selected Method Details Panel */}
-                <div className="rounded-2xl border border-secondary/25 bg-secondary/[0.04] p-3 sm:p-4.5 animate-fade-in text-start space-y-3">
+                <div className="rounded-2xl border border-primary/25 bg-primary/[0.04] p-3 sm:p-4.5 animate-fade-in text-start space-y-3">
                   {/* Panel Header */}
                   <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 sm:pb-3 border-b border-border/50">
                     <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                       <div className="flex h-10 sm:h-11 min-w-[60px] sm:min-w-[70px] px-2 shrink-0 items-center justify-center rounded-xl bg-white dark:bg-card border border-border/80 shadow-2xs overflow-hidden">
-                        <PaymentBrandIcon methodKey={selectedMethod.destinations?.[0]?.bankCode ? `bank_${selectedMethod.destinations[0].bankCode}` : selectedMethod.id} className="h-6 sm:h-7 w-auto max-w-full object-contain" />
+                        <PaymentBrandIcon methodKey={chosenBank?.bankCode ? `bank_${chosenBank.bankCode}` : selectedMethod.id} className="h-6 sm:h-7 w-auto max-w-full object-contain" />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -1352,15 +1412,15 @@ const DonatePage = () => {
                       </div>
                     </div>
 
-                    <span className="shrink-0 text-[10px] sm:text-[11px] font-black text-slate-950 px-2.5 py-0.5 rounded-full bg-secondary shadow-2xs">
+                    <span className="shrink-0 text-[10px] sm:text-[11px] font-black text-primary-foreground px-2.5 py-0.5 rounded-full bg-primary shadow-2xs">
                       {lang === "ar" ? "طريقة الدفع المختارة" : "Selected"}
                     </span>
                   </div>
 
                   {/* Where to send the money — every destination set in the dashboard, each with Copy */}
-                  {(selectedMethod.destinations?.length ?? 0) > 0 && (
+                  {shownDestinations.length > 0 && (
                     <div className="space-y-2">
-                      {selectedMethod.destinations!.map((d) => (
+                      {shownDestinations.map((d) => (
                         <div key={d.value} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl bg-card border border-border/80 p-2.5 sm:p-3 shadow-2xs">
                           <div className="min-w-0 flex items-center gap-2.5">
                             {d.bankCode && <PaymentBrandIcon methodKey={`bank_${d.bankCode}`} className="h-6 w-auto shrink-0" />}
@@ -1370,10 +1430,23 @@ const DonatePage = () => {
                                 <span className="text-xs font-bold text-muted-foreground whitespace-nowrap">{lang === "ar" ? d.labelAr : d.labelEn}:</span>
                                 <span className="font-mono text-base sm:text-lg font-black text-primary select-all tracking-wider" dir="ltr">{d.value}</span>
                               </div>
-                              {(d.iban || d.swift) && (
-                                <div className="mt-0.5 text-[11px] font-mono text-muted-foreground" dir="ltr">
-                                  {d.iban && <>IBAN: {d.iban} </>}{d.swift && <>· SWIFT: {d.swift}</>}
+                              {d.iban && (
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-bold text-muted-foreground">IBAN:</span>
+                                  <span className="font-mono text-xs sm:text-sm font-black text-primary select-all break-all" dir="ltr">{d.iban}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => copy(d.iban!)}
+                                    aria-label={lang === "ar" ? "نسخ رقم IBAN" : "Copy IBAN"}
+                                    className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary/40 px-2 text-[11px] font-black text-primary transition hover:bg-primary hover:text-primary-foreground"
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                    {lang === "ar" ? "نسخ" : "Copy"}
+                                  </button>
                                 </div>
+                              )}
+                              {d.swift && (
+                                <div className="mt-0.5 text-[11px] font-mono text-muted-foreground" dir="ltr">SWIFT: {d.swift}</div>
                               )}
                             </div>
                           </div>
@@ -1382,9 +1455,9 @@ const DonatePage = () => {
                             size="sm"
                             variant="ghost"
                             onClick={() => copy(d.value)}
-                            className="h-7.5 sm:h-8 px-3 text-xs font-black text-slate-950 bg-secondary hover:bg-secondary/80 transition-all rounded-lg shrink-0 w-fit self-end sm:self-auto cursor-pointer shadow-2xs"
+                            className="h-7.5 sm:h-8 px-3 text-xs font-black text-primary-foreground bg-primary hover:bg-primary/80 transition-all rounded-lg shrink-0 w-fit self-end sm:self-auto cursor-pointer shadow-2xs"
                           >
-                            <Copy className="h-3.5 w-3.5 me-1.5 text-slate-950" />
+                            <Copy className="h-3.5 w-3.5 me-1.5 text-primary-foreground" />
                             {lang === "ar" ? "نسخ" : "Copy"}
                           </Button>
                         </div>
@@ -1409,7 +1482,7 @@ const DonatePage = () => {
                                 value={methodFields.bankRef}
                                 onChange={(e) => setMethodFields((f) => ({ ...f, bankRef: e.target.value }))}
                                 placeholder="Ref / Transaction #"
-                                className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold w-full focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                                className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold w-full focus:border-primary focus:ring-2 focus:ring-primary/20"
                               />
                             </>
                           )}
@@ -1450,7 +1523,7 @@ const DonatePage = () => {
                                   if (fieldErrors.instapayHandle) setFieldErrors((p) => ({ ...p, instapayHandle: "" }));
                                 }}
                                 placeholder="yourname@bank"
-                                className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold w-full focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                                className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold w-full focus:border-primary focus:ring-2 focus:ring-primary/20"
                               />
                               {fieldErrors.instapayHandle && (
                                 <p className="mt-1 text-xs font-bold text-destructive">{fieldErrors.instapayHandle}</p>
@@ -1466,25 +1539,25 @@ const DonatePage = () => {
                           </label>
                           <label className={`flex h-10 sm:h-10.5 cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed px-3 text-xs font-bold transition ${
                             receiptFilename
-                              ? "border-secondary bg-secondary/10 text-secondary"
-                              : "border-border/90 bg-card text-muted-foreground hover:border-secondary hover:text-primary"
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border/90 bg-card text-muted-foreground hover:border-primary hover:text-primary"
                           }`}>
                             <div className="flex items-center gap-2 min-w-0 truncate">
                               {receiptFilename ? (
-                                <CheckCircle2 className="h-4 w-4 shrink-0 text-secondary" />
+                                <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
                               ) : (
-                                <Upload className="h-4 w-4 shrink-0 text-secondary" />
+                                <Upload className="h-4 w-4 shrink-0 text-primary" />
                               )}
                               <span className="truncate">
                                 {receiptFilename || (lang === "ar" ? "اختر صورة الإيصال" : "Choose receipt image")}
                               </span>
                             </div>
-                            <span className="shrink-0 text-[10.5px] font-black px-2 py-0.5 rounded-md bg-secondary text-slate-950 shadow-2xs">
+                            <span className="shrink-0 text-[10.5px] font-black px-2 py-0.5 rounded-md bg-primary text-primary-foreground shadow-2xs">
                               {receiptFilename ? (lang === "ar" ? "تغيير" : "Change") : (lang === "ar" ? "رفع" : "Upload")}
                             </span>
                             <input
                               type="file"
-                              accept="image/*"
+                              accept="image/jpeg,image/png,image/webp,application/pdf"
                               className="hidden"
                               onChange={(e) => onReceiptUpload(e.target.files?.[0])}
                             />
@@ -1494,7 +1567,7 @@ const DonatePage = () => {
 
                       {/* Reassurance note filling the bottom cohesively */}
                       <div className="flex items-center gap-2 pt-0.5 text-[11px] font-medium text-muted-foreground">
-                        <ShieldCheck className="h-4 w-4 text-secondary shrink-0" />
+                        <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
                         <span>
                           {lang === "ar"
                             ? "نراجع إشعار التحويل ونؤكد التبرع، ثم نرسل إيصالًا رسميًا معتمدًا فور التحقق."
@@ -1509,14 +1582,14 @@ const DonatePage = () => {
                     <div className="space-y-2.5 pt-1">
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <div className="flex items-center gap-2.5 rounded-xl bg-card border border-border/70 p-2.5 sm:p-3">
-                          <ShieldCheck className="h-4 w-4 sm:h-5 sm:w-5 text-secondary shrink-0" />
+                          <ShieldCheck className="h-4 w-4 sm:h-5 sm:w-5 text-primary shrink-0" />
                           <div>
                             <p className="text-xs font-black text-primary">{lang === "ar" ? "حماية 3D Secure" : "3D Secure"}</p>
                             <p className="text-[10px] sm:text-[10.5px] text-muted-foreground">{lang === "ar" ? "دفع بنكي مشفّر 100%" : "Encrypted payment"}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2.5 rounded-xl bg-card border border-border/70 p-2.5 sm:p-3">
-                          <CreditCard className="h-4 w-4 sm:h-5 sm:w-5 text-secondary shrink-0" />
+                          <CreditCard className="h-4 w-4 sm:h-5 sm:w-5 text-primary shrink-0" />
                           <div>
                             <p className="text-xs font-black text-primary">
                               {lang === "ar" ? "كاشير (Kashier)" : "Kashier Egypt"}
@@ -1525,7 +1598,7 @@ const DonatePage = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2.5 rounded-xl bg-card border border-border/70 p-2.5 sm:p-3">
-                          <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 text-secondary shrink-0" />
+                          <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 text-primary shrink-0" />
                           <div>
                             <p className="text-xs font-black text-primary">{lang === "ar" ? "إيصال فوري معتمد" : "Instant Receipt"}</p>
                             <p className="text-[10px] sm:text-[10.5px] text-muted-foreground">{lang === "ar" ? "يصدر فور نجاح العملية" : "Upon success"}</p>
@@ -1572,7 +1645,7 @@ const DonatePage = () => {
                               if (fieldErrors.pickupCity) setFieldErrors((p) => ({ ...p, pickupCity: "" }));
                             }}
                             placeholder={lang === "ar" ? "مثال: المنصورة - حي الجامعة" : "e.g. Mansoura - University district"}
-                            className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                            className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-primary focus:ring-2 focus:ring-primary/20"
                           />
                           {fieldErrors.pickupCity && (
                             <p className="mt-1 text-xs font-bold text-destructive">{fieldErrors.pickupCity}</p>
@@ -1592,7 +1665,7 @@ const DonatePage = () => {
                                 key={slot.ar}
                                 type="button"
                                 onClick={() => setMethodFields((f) => ({ ...f, pickupTime: value }))}
-                                className={`rounded-xl border px-2 py-2 text-[11px] font-extrabold transition sm:text-xs ${active ? "border-secondary bg-secondary/15 text-primary" : "border-border/70 bg-card text-muted-foreground hover:border-secondary/60"}`}
+                                className={`rounded-xl border px-2 py-2 text-[11px] font-extrabold transition sm:text-xs ${active ? "border-primary bg-primary/15 text-primary" : "border-border/70 bg-card text-muted-foreground hover:border-primary/60"}`}
                                 aria-pressed={active}
                               >
                                 {value}
@@ -1614,14 +1687,14 @@ const DonatePage = () => {
                             if (fieldErrors.pickupAddress) setFieldErrors((p) => ({ ...p, pickupAddress: "" }));
                           }}
                           placeholder={lang === "ar" ? "الشارع، رقم العمارة، الشقة، علامة مميزة" : "Street, building number, apartment, landmark"}
-                          className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-secondary focus:ring-2 focus:ring-secondary/20"
+                          className="h-10 sm:h-10.5 rounded-xl bg-card border-border/70 text-xs sm:text-sm font-bold focus:border-primary focus:ring-2 focus:ring-primary/20"
                         />
                         {fieldErrors.pickupAddress && (
                           <p className="mt-1 text-xs font-bold text-destructive">{fieldErrors.pickupAddress}</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 pt-0.5 text-[11px] font-medium text-muted-foreground">
-                        <Truck className="h-4 w-4 text-secondary shrink-0" />
+                        <Truck className="h-4 w-4 text-primary shrink-0" />
                         <span>
                           {lang === "ar"
                             ? "خدمة الاستلام المنزلي مجانية بالكامل، وسيسلّمك مندوبنا إيصالًا رسميًا معتمدًا عند الاستلام."
@@ -1685,10 +1758,10 @@ const DonatePage = () => {
                               donor_phone: donor.phone,
                               payment_method: "kashier",
                               payment_status: "pending",
-                              message: [
+                              message: composeDonationNotes([
                                 caseTitle ? `Case: ${caseTitle}` : "",
-                                `Entities: ${itemsBreakdownText}`,
-                              ].filter(Boolean).join(" | "),
+                                linesNote,
+                              ], donorNote),
                               idempotency_key: idemKey.current,
                             });
                           const sessionUrl: string | undefined = res?.payment?.session_url;
@@ -1716,7 +1789,7 @@ const DonatePage = () => {
 
                       setStep(3);
                     }}
-                    className="h-11 sm:h-12 w-full sm:w-auto bg-orange-grad px-3 sm:px-8 text-accent-foreground shadow-cta hover:opacity-95 rounded-xl font-black text-xs sm:text-sm cursor-pointer order-2"
+                    className="h-11 sm:h-12 w-full sm:w-auto bg-primary px-3 sm:px-8 text-primary-foreground shadow-soft hover:bg-primary-glow rounded-xl font-black text-xs sm:text-sm cursor-pointer order-2"
                   >
                     {processing ? (
                       <>
@@ -1737,11 +1810,11 @@ const DonatePage = () => {
                 </div>
                 <p className="mt-3 text-center text-xs leading-relaxed text-muted-foreground">
                   {lang === "ar" ? "بإتمام التبرع أنت توافق على " : "By donating you agree to our "}
-                  <Link to="/terms#donations" target="_blank" className="font-bold text-primary underline underline-offset-2 hover:text-accent">
+                  <Link to="/terms#donations" target="_blank" className="font-bold text-primary underline underline-offset-2 hover:text-primary">
                     {lang === "ar" ? "الشروط والأحكام" : "Terms & Conditions"}
                   </Link>
                   {lang === "ar" ? " و" : " and "}
-                  <Link to="/privacy" target="_blank" className="font-bold text-primary underline underline-offset-2 hover:text-accent">
+                  <Link to="/privacy" target="_blank" className="font-bold text-primary underline underline-offset-2 hover:text-primary">
                     {lang === "ar" ? "سياسة الخصوصية" : "Privacy Policy"}
                   </Link>
                   .
@@ -1754,7 +1827,7 @@ const DonatePage = () => {
               <div className="text-center py-4">
                 {processing ? (
                   <div className="py-12">
-                    <Loader2 className="mx-auto h-12 w-12 animate-spin text-secondary" />
+                    <Loader2 className="mx-auto h-12 w-12 animate-spin text-primary" />
                     <p className="mt-4 text-base sm:text-lg font-bold text-primary">
                       {lang === "ar" ? "جارٍ تسجيل التبرع..." : "Recording donation..."}
                     </p>
@@ -1763,8 +1836,8 @@ const DonatePage = () => {
                   <div>
                     {/* Central Phosphor Checkmark Circle */}
                     <div className="relative mx-auto my-6 w-fit">
-                      <div className="relative mx-auto grid h-20 w-20 sm:h-24 sm:w-24 place-items-center rounded-full bg-secondary text-slate-950 shadow-cta ring-4 ring-secondary/30">
-                        <CheckCircle2 className="h-11 w-11 sm:h-12 sm:w-12 text-slate-950 stroke-[2.5]" />
+                      <div className="relative mx-auto grid h-20 w-20 sm:h-24 sm:w-24 place-items-center rounded-full bg-primary text-primary-foreground shadow-soft ring-4 ring-primary/30">
+                        <CheckCircle2 className="h-11 w-11 sm:h-12 sm:w-12 text-primary-foreground stroke-[2.5]" />
                       </div>
                     </div>
 
@@ -1806,7 +1879,7 @@ const DonatePage = () => {
                     )}
 
                     {/* Dua Message */}
-                    <div className="mt-3.5 inline-flex items-center justify-center gap-2 rounded-2xl bg-secondary/15 border border-secondary/35 px-4 py-2.5 text-xs sm:text-sm font-black text-slate-900 dark:text-secondary shadow-xs">
+                    <div className="mt-3.5 inline-flex items-center justify-center gap-2 rounded-2xl bg-primary/15 border border-primary/35 px-4 py-2.5 text-xs sm:text-sm font-black text-slate-900 dark:text-primary shadow-xs">
                       <span>
                         {lang === "ar"
                           ? "تقبّل الله تبرعكم، وجعله صدقة مباركة وأجرًا دائمًا بإذن الله 💚 🤲"
@@ -1815,7 +1888,7 @@ const DonatePage = () => {
                     </div>
 
                     {record && (
-                      <div className="mx-auto mt-5 sm:mt-6 w-full max-w-md rounded-2xl border-2 border-secondary/40 bg-secondary/[0.05] p-3.5 sm:p-4 shadow-2xs">
+                      <div className="mx-auto mt-5 sm:mt-6 w-full max-w-md rounded-2xl border-2 border-primary/40 bg-primary/[0.05] p-3.5 sm:p-4 shadow-2xs">
                         <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                           {lang === "ar" ? "رقم مرجع التبرع" : "Transaction Reference"}
                         </div>
@@ -1826,7 +1899,7 @@ const DonatePage = () => {
                           <button
                             type="button"
                             onClick={() => copy(record.ref)}
-                            className="bg-secondary text-slate-950 hover:bg-secondary/80 p-1.5 rounded-lg shadow-2xs cursor-pointer transition-all"
+                            className="bg-primary text-primary-foreground hover:bg-primary/80 p-1.5 rounded-lg shadow-2xs cursor-pointer transition-all"
                             title={lang === "ar" ? "نسخ" : "Copy"}
                           >
                             <Copy className="h-4 w-4" />
@@ -1834,7 +1907,7 @@ const DonatePage = () => {
                         </div>
                         <div className="mt-2 text-xs font-extrabold text-muted-foreground flex items-center justify-center gap-1.5">
                           <span>{lang === "ar" ? "الحالة:" : "Status:"}</span>
-                          <span className="rounded-full px-2.5 py-0.5 bg-secondary text-slate-950 font-black text-xs shadow-2xs">
+                          <span className="rounded-full px-2.5 py-0.5 bg-primary text-primary-foreground font-black text-xs shadow-2xs">
                             {record.status === "completed"
                               ? (lang === "ar" ? "تم التأكيد" : "Confirmed")
                               : record.status === "failed"
@@ -1857,7 +1930,7 @@ const DonatePage = () => {
                       {/* الصف الأول: تتبع التبرع + تأكيد عبر واتساب معاً في نفس الصف حتى في الهواتف */}
                       <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full">
                         {record && (
-                          <Button asChild size="lg" className="bg-orange-grad text-accent-foreground shadow-cta hover:opacity-95 rounded-xl h-11 sm:h-12 px-2 sm:px-4 text-[11px] sm:text-sm font-bold w-full justify-center">
+                          <Button asChild size="lg" className="bg-primary text-primary-foreground shadow-soft hover:bg-primary-glow rounded-xl h-11 sm:h-12 px-2 sm:px-4 text-[11px] sm:text-sm font-bold w-full justify-center">
                             <Link to={`/donate/track/${record.ref}`} className="truncate flex items-center justify-center">
                               <ReceiptIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 me-1 shrink-0" />
                               <span className="truncate">{lang === "ar" ? "تتبع التبرع" : "Track Donation"}</span>
@@ -1901,11 +1974,11 @@ const DonatePage = () => {
           {/* Compact, Sleek Micro Trust Badges */}
           <div className="mt-4 sm:mt-5 flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-[11px] sm:text-xs font-bold text-muted-foreground">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-card/90 backdrop-blur-xs border border-border/70 shadow-2xs text-slate-700 dark:text-slate-300">
-              <ShieldCheck className="h-3.5 w-3.5 text-secondary shrink-0" />
+              <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0" />
               <span>{t.donate.secure}</span>
             </span>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-card/90 backdrop-blur-xs border border-border/70 shadow-2xs text-slate-700 dark:text-slate-300">
-              <Lock className="h-3.5 w-3.5 text-secondary shrink-0" />
+              <Lock className="h-3.5 w-3.5 text-primary shrink-0" />
               <span>{t.donate.paymentSecure}</span>
             </span>
           </div>
@@ -1933,10 +2006,7 @@ const DonatePage = () => {
         donorEmail={donor.email}
         donorPhone={donor.phone}
         caseId={donationTarget?.kind === "case" ? String(donationTarget.id) : null}
-        message={[
-          caseTitle ? `Case: ${caseTitle}` : "",
-          `Entities: ${itemsBreakdownText}`,
-        ].filter(Boolean).join(" | ")}
+        message={composeDonationNotes([caseTitle ? `Case: ${caseTitle}` : "", linesNote], donorNote)}
         onClose={() => {
           setIsKashierModalOpen(false);
         }}

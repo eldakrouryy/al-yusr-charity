@@ -37,6 +37,9 @@ import { FormSkeleton } from "@/components/common/ContentSkeletons";
 import { DeliveryStagesCard } from "@/components/admin/donations/DeliveryStagesCard";
 import { parseDelivery } from "@/lib/deliveryJourney";
 import { askConfirm } from "@/components/common/confirm";
+import { splitDonationNotes } from "@/lib/donorNote";
+import { parseDonationLines, withoutDonationLines } from "@/lib/donationLines";
+import { DonationLinesTable, DonationReceiptFile } from "@/components/admin/donations/DonationLines";
 
 const STATUS_CONFIG: Record<
   string,
@@ -531,12 +534,28 @@ export default function AdminDonationDetail() {
                 </div>
               )}
 
-              {row.notes && (
-                <div className="rounded-xl bg-muted/40 p-3 text-xs space-y-1">
-                  <p className="font-bold text-muted-foreground">{isAr ? "رسالة أو ملاحظات المتبرع:" : "Donor message / Notes:"}</p>
-                  <p className="text-foreground leading-relaxed font-medium">{row.notes}</p>
-                </div>
-              )}
+              {row.notes && (() => {
+                // The donor's own note (typed in the form) apart from what the form adds (programs, bank, pickup).
+                const { donorNote, details: allDetails } = splitDonationNotes(row.notes);
+                // The items are shown as their own table (in the allocation card).
+                const details = withoutDonationLines(allDetails);
+                return (
+                  <>
+                    {donorNote && (
+                      <div className="rounded-xl border border-accent/40 bg-accent/10 p-3 text-xs space-y-1">
+                        <p className="font-black text-accent">{isAr ? "ملاحظات المتبرع:" : "Donor notes:"}</p>
+                        <p className="text-foreground leading-relaxed font-bold whitespace-pre-line">{donorNote}</p>
+                      </div>
+                    )}
+                    {details && (
+                      <div className="rounded-xl bg-muted/40 p-3 text-xs space-y-1">
+                        <p className="font-bold text-muted-foreground">{isAr ? "تفاصيل الطلب:" : "Order details:"}</p>
+                        <p className="text-foreground leading-relaxed font-medium">{details}</p>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </dl>
 
             {/* WhatsApp Contact Button - bottom of donor card */}
@@ -573,7 +592,14 @@ export default function AdminDonationDetail() {
               </div>
             </div>
 
+            <DonationLinesTable lines={parseDonationLines(splitDonationNotes(row.notes).details)} total={Number(row.amount) || 0} isAr={isAr} />
+
             <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3">
+              {parseDonationLines(splitDonationNotes(row.notes).details).length > 1 && (
+                <p className="text-[11px] font-bold text-muted-foreground">
+                  {isAr ? "التبرع كله متسجّل محاسبيًا على:" : "The whole donation is booked on:"}
+                </p>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold uppercase text-muted-foreground tracking-wider">
                   {targetType}
@@ -640,6 +666,8 @@ export default function AdminDonationDetail() {
             </div>
           </section>
         </div>
+
+        {row.payment_receipt && <DonationReceiptFile url={String(row.payment_receipt)} isAr={isAr} />}
 
         {/* Delivery steps the donor follows (after payment) */}
         <DeliveryStagesCard

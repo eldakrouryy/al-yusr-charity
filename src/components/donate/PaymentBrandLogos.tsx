@@ -67,6 +67,14 @@ export const SingleCardLogo = ({ className = "h-5 sm:h-6" }: { className?: strin
   </div>
 );
 
+/** Card payments (through the gateway): the card brands donors know, Visa first. */
+export const VisaCardsLogo = ({ className = "h-5 sm:h-6" }: { className?: string }) => (
+  <div className={`inline-flex items-center justify-center gap-1 shrink-0 ${className}`}>
+    <img src="/images/payments/visa.svg" alt="Visa" className="h-[70%] w-auto max-h-full object-contain" loading="lazy" />
+    <img src="/images/payments/mastercard.svg" alt="Mastercard" className="h-full w-auto max-h-full object-contain" loading="lazy" />
+  </div>
+);
+
 export const KashierLogo = ({ className = "h-5 sm:h-6" }: { className?: string }) => (
   <div className={`inline-flex items-center justify-center shrink-0 ${className}`}>
     <img
@@ -131,7 +139,7 @@ export const PaymentBrandIcon = ({
     return <InstaPayLogo className={className} />;
   }
   if (k.includes("kashier") || p.includes("kashier")) {
-    return <KashierLogo className={className} />;
+    return <VisaCardsLogo className={className} />;
   }
   if (k.includes("fawry") || p.includes("fawry")) {
     return <FawryLogo className={className} />;

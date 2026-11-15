@@ -3,6 +3,8 @@
  * One place for the three donation screens (list, home, analytics).
  */
 import type { AdminDonation } from "@/data/api/donationsAdminApi";
+import { parseDonationLines } from "@/lib/donationLines";
+import { splitDonationNotes } from "@/lib/donorNote";
 
 type Lang = "ar" | "en";
 
@@ -54,6 +56,10 @@ export function donationStatusTone(status: string, isGateway = false): string {
 /** What the donation was for: case › project › campaign › program › general. */
 export function donationTargetLabel(d: AdminDonation, lang: Lang): string {
   const ar = lang === "ar";
+  // What the donor chose in the form (the backend keeps one target, the items live in the notes).
+  const lines = parseDonationLines(splitDonationNotes(d.notes).details);
+  if (lines.length === 1) return lines[0].choice ? `${lines[0].target} — ${lines[0].choice}` : lines[0].target;
+  if (lines.length > 1) return lines.map((l) => l.target).filter((t, i, a) => a.indexOf(t) === i).join(" + ");
   if (d.case) return `${ar ? "حالة" : "Case"}: ${d.case.title || d.case.code || `#${d.case.id}`}`;
   if (d.project) return `${ar ? "مشروع" : "Project"}: ${(ar ? d.project.name : d.project.name_en || d.project.name) || `#${d.project.id}`}`;
   if (d.donation_campaign) return `${ar ? "حملة" : "Campaign"}: ${(ar ? d.donation_campaign.name_ar : d.donation_campaign.name_en || d.donation_campaign.name_ar) || `#${d.donation_campaign.id}`}`;

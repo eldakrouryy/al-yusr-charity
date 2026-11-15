@@ -576,6 +576,18 @@ export async function uploadCaseMedia(file: File, opts: { caseId?: string; visib
 /** Backend program used for general (untargeted) donations, e.g. the home quick-donate. */
 export const GENERAL_PROGRAM_ID = Number(import.meta.env.VITE_GENERAL_PROGRAM_ID) || 36;
 
+/** The submit body: plain JSON, or multipart with the receipt file (the backend stores `payment_receipt`). */
+export function withReceipt(file: File | null | undefined, payload: Record<string, unknown>): Record<string, unknown> | FormData {
+  if (!file || typeof FormData === "undefined") return payload;
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(payload)) {
+    if (v === undefined || v === null) continue;
+    fd.append(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+  }
+  fd.append("payment_receipt", file, file.name);
+  return fd;
+}
+
 export async function createDonation(input: {
   /** The record this donation is booked on (case / program / project / campaign); wins over the legacy fields. */
   target?: DonationTarget | null;
@@ -593,6 +605,8 @@ export async function createDonation(input: {
   idempotency_key?: string;
   /** Delegate pickup: where and when the delegate collects the money (stored on the donation). */
   pickup?: { governorate?: string; city?: string; address?: string; preferredTime?: string } | null;
+  /** Transfer receipt (image / PDF): sent as `payment_receipt`, shown on the donation in the dashboard. */
+  receiptFile?: File | null;
 }) {
   const refCode = `YSR-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
   const now = new Date().toISOString();
@@ -649,7 +663,7 @@ export async function createDonation(input: {
   const frontendUrl = `${frontendOrigin}/donate/status/${encodeURIComponent(refCode)}`;
 
   try {
-    laravelResponse = await donationsApiV1.submit({
+    laravelResponse = await donationsApiV1.submit(withReceipt(input.receiptFile, {
       donation_target: String(input.amount || 100),
       provider: pmInfo.provider,
       // Only what the donor typed: the backend shows «فاعل خير» when the name is empty and
@@ -673,7 +687,7 @@ export async function createDonation(input: {
             pickup_preferred_time: input.pickup.preferredTime?.trim() || undefined,
           }
         : {}),
-    });
+    }));
   } catch (err) {
     // Never continue with a donation the server did not record: the caller shows this message.
     const apiErr = err as { message?: string; errors?: Record<string, string[]> };

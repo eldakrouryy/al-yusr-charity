@@ -5,6 +5,7 @@ import type { AdminDonation } from "@/data/api/donationsAdminApi";
 import {
   donationMethodLabel, donationStatusLabel, donationStatusTone, donationTargetLabel, formatDateTime, formatMoney,
 } from "@/lib/donationDisplay";
+import { splitDonationNotes } from "@/lib/donorNote";
 
 /**
  * One donation as a compact card for phones (the tables stay for wider screens): donor and status on
@@ -16,6 +17,7 @@ export function DonationCard({ d, lang, actions }: { d: AdminDonation; lang: "ar
   const donor = d.donor?.name || (ar ? "فاعل خير" : "Anonymous");
   const target = donationTargetLabel(d, lang);
   const Chevron = ar ? ChevronLeft : ChevronRight;
+  const note = splitDonationNotes(d.notes).donorNote;
 
   const body = (
     <div className="flex items-start gap-3">
@@ -30,6 +32,11 @@ export function DonationCard({ d, lang, actions }: { d: AdminDonation; lang: "ar
           {donationMethodLabel(d, lang)} · {formatDateTime(d.created_at, lang)}
         </p>
         {target && <p className="mt-0.5 truncate text-[11.5px] font-bold text-primary/80">{target}</p>}
+        {note && (
+          <p className="mt-1 truncate rounded-md bg-accent/10 px-2 py-0.5 text-[11px] font-bold text-foreground" title={note}>
+            <span className="text-accent">{ar ? "ملاحظة: " : "Note: "}</span>{note}
+          </p>
+        )}
       </div>
       <div className="shrink-0 text-end">
         <div className="text-[15px] font-black tabular-nums text-emerald-700 dark:text-emerald-400">{formatMoney(Number(d.amount), lang)}</div>

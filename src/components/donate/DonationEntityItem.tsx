@@ -80,6 +80,9 @@ export function DonationEntityItem({
   const hasShareImages = selectedEntity.shares.some((sh) => !!sh.image);
   const hasCases  = selectedEntity.cases.length > 0;
   const isMarkoun = !!selectedEntity.isMarkoun;
+  /** No program / project / campaign chosen yet: the donor picks one first (the form never assumes «تبرع عام»). */
+  const unselected = !item.entityId;
+  const forWhat = selectedEntity.entityType === "project" ? "للمشروع" : selectedEntity.entityType === "campaign" ? "للحملة" : "للبرنامج";
 
   // Measure trigger on open
   const openDropdown = useCallback(() => {
@@ -129,16 +132,14 @@ export function DonationEntityItem({
   // ── Entity Selection ──
   const selectEntity = (id: string) => {
     const next = entities.find((e) => e.id === id) || entities[0];
-    // The general amount of this program is already in another line: start on a free share instead.
-    const freeShare = next.shares.find((sh) => !takenBy(shareKey(next.id, sh.id)));
-    const useShare = !next.isMarkoun && !!takenBy(generalKey(next.id)) && !!freeShare;
-    const defMode = next.isMarkoun ? "in_kind" : useShare ? "shares" : "general";
+    // A program with packages opens on its packages, none picked: the donor chooses one, or «تبرع عام للبرنامج».
+    const defMode = next.isMarkoun ? "in_kind" : next.shares.length > 0 ? "shares" : "general";
     onUpdate({
       ...item,
       entityId:      next.id,
       donationMode:  defMode,
-      amount:        defMode === "in_kind" ? 0 : useShare && freeShare ? freeShare.price : (next.priceFrom || 100),
-      selectedShares: useShare && freeShare ? { [freeShare.id]: 1 } : {},
+      amount:        defMode === "general" ? (next.priceFrom || 100) : 0,
+      selectedShares: {},
       selectedCaseId: null,
     });
     setDropdownOpen(false);
@@ -151,8 +152,7 @@ export function DonationEntityItem({
     } else if (m === "general") {
       onUpdate({ ...item, donationMode: "general", amount: item.amount > 0 ? item.amount : (selectedEntity.priceFrom || 100), selectedShares: {}, selectedCaseId: null });
     } else if (m === "shares") {
-      const first = selectedEntity.shares.find((sh) => !takenBy(shareKey(selectedEntity.id, sh.id)));
-      onUpdate({ ...item, donationMode: "shares", selectedShares: first ? { [first.id]: 1 } : {}, amount: first?.price ?? (selectedEntity.priceFrom || 100), selectedCaseId: null });
+      onUpdate({ ...item, donationMode: "shares", selectedShares: {}, amount: 0, selectedCaseId: null });
     } else if (m === "case") {
       const first = selectedEntity.cases.find((c) => !takenBy(caseKey(c.id)));
       onUpdate({ ...item, donationMode: "case", selectedCaseId: first?.id || null, amount: item.amount > 0 ? item.amount : 250, selectedShares: {} });
@@ -171,7 +171,7 @@ export function DonationEntityItem({
       const s = selectedEntity.shares.find((x) => x.id === sId);
       if (s) total += s.price * cnt;
     }
-    onUpdate({ ...item, selectedShares: updated, amount: total > 0 ? total : (selectedEntity.priceFrom || 100) });
+    onUpdate({ ...item, selectedShares: updated, amount: total });
   };
 
   const quickAmounts = [50, 100, 200, 500, 1000].filter((a) => a >= (selectedEntity.priceFrom || 10));
@@ -232,7 +232,7 @@ export function DonationEntityItem({
                   <div className="flex-1 h-px bg-border/30" />
                 </div>
                 {group.map((e) => {
-                  const sel = e.id === selectedEntity.id;
+                  const sel = !unselected && e.id === selectedEntity.id;
                   return (
                     <button
                       key={e.id}
@@ -242,20 +242,20 @@ export function DonationEntityItem({
                       onClick={() => selectEntity(e.id)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 text-start transition-all cursor-pointer rounded-lg ${
                         sel
-                          ? "bg-emerald-950 text-white shadow-sm border-r-4 border-secondary dark:bg-emerald-950"
+                          ? "bg-emerald-950 text-white shadow-sm border-r-4 border-accent dark:bg-emerald-950"
                           : "hover:bg-muted/60 text-foreground"
                       }`}
                     >
                       <div className={`h-9 w-9 shrink-0 rounded-lg overflow-hidden border ${
-                        sel ? "border-secondary/50 ring-1 ring-secondary/30" : "border-border/60 bg-muted"
+                        sel ? "border-accent/50 ring-1 ring-accent/30" : "border-border/60 bg-muted"
                       }`}>
                         {e.image
                           ? <img src={e.image} alt={e.ar} className="h-full w-full object-cover" loading="lazy" />
-                          : <div className="h-full w-full grid place-items-center bg-secondary text-slate-950 text-xs font-black">{e.ar.slice(0, 2)}</div>}
+                          : <div className="h-full w-full grid place-items-center bg-accent text-accent-foreground text-xs font-black">{e.ar.slice(0, 2)}</div>}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className={`text-sm font-black truncate leading-tight tracking-wide ${
-                          sel ? "text-secondary drop-shadow-[0_0_8px_rgba(190,242,100,0.35)]" : "text-primary"
+                          sel ? "text-accent" : "text-primary"
                         }`}>
                           {isAR ? e.ar : e.en}
                         </p>
@@ -267,7 +267,7 @@ export function DonationEntityItem({
                         <span className={`text-[10px] font-bold whitespace-nowrap ${sel ? "text-emerald-200" : "text-muted-foreground"}`}>
                           {e.priceFrom ? `${isAR ? "من" : "from"} ${e.priceFrom}` : (isAR ? "مفتوح" : "open")}
                         </span>
-                        {sel && <Check className="h-4 w-4 text-secondary stroke-[2.5]" />}
+                        {sel && <Check className="h-4 w-4 text-accent stroke-[2.5]" />}
                       </div>
                     </button>
                   );
@@ -283,12 +283,12 @@ export function DonationEntityItem({
 
   /* ─────────────────────────── RENDER ─────────────────────────── */
   return (
-    <div className="rounded-2xl border border-border/80 bg-card text-start shadow-xs hover:border-secondary/40 transition-colors">
+    <div className="rounded-2xl border border-border/80 bg-card text-start shadow-xs hover:border-primary/40 transition-colors">
 
       {/* ── Card Header ── */}
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border/40 bg-muted/20 rounded-t-2xl">
         <div className="flex items-center gap-2">
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-slate-950 text-[11px] font-black leading-none select-none">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground text-[11px] font-black leading-none select-none">
             {index + 1}
           </span>
           <span className="text-xs font-bold text-muted-foreground">
@@ -319,17 +319,32 @@ export function DonationEntityItem({
             onClick={() => dropdownOpen ? setDropdownOpen(false) : openDropdown()}
             className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-start bg-card cursor-pointer select-none transition-all ${
               dropdownOpen
-                ? "border-secondary ring-2 ring-secondary/20"
-                : "border-border/80 hover:border-secondary/50"
+                ? "border-primary ring-2 ring-primary/20"
+                : "border-border/80 hover:border-primary/50"
             }`}
             aria-haspopup="listbox"
             aria-expanded={dropdownOpen}
           >
+            {unselected ? (
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-dashed border-primary/60 bg-primary/10 text-primary">
+                  <Search className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-primary leading-tight">
+                    {isAR ? "اختر البرنامج أو المشروع أو الحملة" : "Choose a program, project or campaign"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                    {isAR ? "ستظهر لك باقاته، أو تبرّع له تبرعًا عامًا" : "You'll see its packages, or give a general amount"}
+                  </p>
+                </div>
+              </div>
+            ) : (
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="h-10 w-10 shrink-0 rounded-lg overflow-hidden border border-border/70 bg-muted">
                 {selectedEntity.image
                   ? <img src={selectedEntity.image} alt={selectedEntity.ar} className="h-full w-full object-cover" loading="lazy" />
-                  : <div className="h-full w-full grid place-items-center bg-secondary text-slate-950 text-xs font-black">{selectedEntity.ar.slice(0, 2)}</div>}
+                  : <div className="h-full w-full grid place-items-center bg-primary text-primary-foreground text-xs font-black">{selectedEntity.ar.slice(0, 2)}</div>}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -351,7 +366,8 @@ export function DonationEntityItem({
                 </p>
               </div>
             </div>
-            <div className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-muted/60 text-muted-foreground transition-transform duration-150 ${dropdownOpen ? "rotate-180 text-secondary" : ""}`}>
+            )}
+            <div className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-muted/60 text-muted-foreground transition-transform duration-150 ${dropdownOpen ? "rotate-180 text-primary" : ""}`}>
               <ChevronDown className="h-4 w-4" />
             </div>
           </button>
@@ -360,36 +376,37 @@ export function DonationEntityItem({
           {portalDropdown}
         </div>
 
-        {/* ── Mode Tabs ── */}
+        {/* ── Mode Tabs (once a program is chosen): its packages first, then a general amount for it ── */}
+        {!unselected && (<>
         <div className="flex flex-wrap gap-1.5">
-          <button type="button" onClick={() => setMode("general")}
+          {hasShares && (
+            <button type="button" onClick={() => setMode("shares")} aria-pressed={item.donationMode === "shares"}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition cursor-pointer border ${
+                item.donationMode === "shares"
+                  ? "bg-accent text-accent-foreground border-accent shadow-xs"
+                  : "border-border/60 text-muted-foreground hover:border-accent/50 hover:text-primary bg-card"
+              }`}>
+              {isAR ? `الباقات (${selectedEntity.shares.length})` : `Packages (${selectedEntity.shares.length})`}
+            </button>
+          )}
+
+          <button type="button" onClick={() => setMode("general")} aria-pressed={item.donationMode === "general"}
             className={`rounded-lg px-3 py-1.5 text-xs font-bold transition cursor-pointer border ${
               item.donationMode === "general"
-                ? "bg-secondary text-slate-950 border-secondary shadow-xs"
-                : "border-border/60 text-muted-foreground hover:border-secondary/50 hover:text-primary bg-card"
+                ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                : "border-border/60 text-muted-foreground hover:border-primary/50 hover:text-primary bg-card"
             }`}>
             {selectedEntity.id === "general"
               ? (isAR ? "تبرع عام" : "General Donation")
-              : (isAR ? `تبرع عام ${selectedEntity.entityType === "project" ? "للمشروع" : "للبرنامج"}` : "General Donation")}
+              : (isAR ? `تبرع عام ${forWhat}` : "General donation")}
           </button>
-
-          {hasShares && (
-            <button type="button" onClick={() => setMode("shares")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition cursor-pointer border ${
-                item.donationMode === "shares"
-                  ? "bg-secondary text-slate-950 border-secondary shadow-xs"
-                  : "border-border/60 text-muted-foreground hover:border-secondary/50 hover:text-primary bg-card"
-              }`}>
-              {isAR ? `الأسهم والباقات (${selectedEntity.shares.length})` : `Shares (${selectedEntity.shares.length})`}
-            </button>
-          )}
 
           {hasCases && (
             <button type="button" onClick={() => setMode("case")}
               className={`rounded-lg px-3 py-1.5 text-xs font-bold transition cursor-pointer border ${
                 item.donationMode === "case"
-                  ? "bg-secondary text-slate-950 border-secondary shadow-xs"
-                  : "border-border/60 text-muted-foreground hover:border-secondary/50 hover:text-primary bg-card"
+                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                  : "border-border/60 text-muted-foreground hover:border-primary/50 hover:text-primary bg-card"
               }`}>
               {isAR ? `حالات إنسانية (${selectedEntity.cases.length})` : `Cases (${selectedEntity.cases.length})`}
             </button>
@@ -429,7 +446,7 @@ export function DonationEntityItem({
                   value={item.amount || ""}
                   onChange={(e) => onUpdate({ ...item, amount: Number(e.target.value) || 0 })}
                   placeholder={isAR ? "اكتب المبلغ" : "Enter amount"}
-                  className="h-10 ps-3 pe-14 font-black text-base rounded-xl border-border/70 focus:border-secondary focus:ring-2 focus:ring-secondary/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="h-10 ps-3 pe-14 font-black text-base rounded-xl border-border/70 focus:border-primary focus:ring-2 focus:ring-primary/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
                 <span className="pointer-events-none absolute end-2.5 top-1/2 -translate-y-1/2 text-[11px] font-black text-muted-foreground">
                   {isAR ? "ج.م" : "EGP"}
@@ -440,8 +457,8 @@ export function DonationEntityItem({
                   <button key={q} type="button" onClick={() => onUpdate({ ...item, amount: q })}
                     className={`h-9 px-2.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
                       item.amount === q
-                        ? "bg-secondary text-slate-950 border-secondary"
-                        : "border-border/60 text-primary hover:border-secondary/50 bg-card"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border/60 text-primary hover:border-primary/50 bg-card"
                     }`}>
                     {q} {isAR ? "ج" : "EGP"}
                   </button>
@@ -460,7 +477,7 @@ export function DonationEntityItem({
         {item.donationMode === "shares" && (
           <div className="space-y-2">
             <p className="text-[11px] text-muted-foreground">
-              {isAR ? "اختر سهمًا أو أكثر، وسيُحسب المبلغ تلقائيًا" : "Select one or more shares — total auto-calculates"}
+              {isAR ? `اختر باقة أو أكثر ليُحسب المبلغ تلقائيًا، أو اختر «تبرع عام ${forWhat}» واكتب المبلغ` : "Pick one or more packages (the total adds up), or choose a general donation and enter an amount"}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {selectedEntity.shares.map((share) => {
@@ -471,7 +488,7 @@ export function DonationEntityItem({
                 return (
                   <div key={share.id}
                     className={`flex h-full flex-col rounded-xl border p-2.5 transition-all ${
-                      selected ? "border-secondary bg-secondary/[0.08] ring-1 ring-secondary/30" : inLine ? "border-border/50 bg-muted/30 opacity-70" : "border-border/70 bg-card"
+                      selected ? "border-accent bg-accent/[0.08] ring-1 ring-accent/30" : inLine ? "border-border/50 bg-muted/30 opacity-70" : "border-border/70 bg-card"
                     }`}>
                     <div className="flex items-start gap-2.5">
                       {hasShareImages && <OptionThumb src={share.image} alt={share.imageAlt || name} kind="share" />}
@@ -503,13 +520,13 @@ export function DonationEntityItem({
                           </button>
                           <span className="w-6 text-center text-xs font-black text-primary" aria-live="polite">{count}</span>
                           <button type="button" onClick={() => updateShareCount(share.id, 1)} aria-label={isAR ? `زيادة ${name}` : `More ${name}`}
-                            className="grid h-7 w-7 place-items-center rounded-md bg-secondary text-slate-950 transition hover:opacity-90 cursor-pointer">
+                            className="grid h-7 w-7 place-items-center rounded-md bg-accent text-accent-foreground transition hover:opacity-90 cursor-pointer">
                             <Plus className="h-3 w-3" />
                           </button>
                         </div>
                       ) : (
                         <button type="button" disabled={!!inLine} onClick={() => updateShareCount(share.id, 1)}
-                          className="h-8 rounded-lg border border-secondary/50 px-3 text-xs font-bold text-primary transition hover:bg-secondary hover:text-slate-950 cursor-pointer disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent">
+                          className="h-8 rounded-lg border border-accent/50 px-3 text-xs font-bold text-primary transition hover:bg-accent hover:text-accent-foreground cursor-pointer disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent">
                           {isAR ? "+ اختيار" : "+ Select"}
                         </button>
                       )}
@@ -519,7 +536,7 @@ export function DonationEntityItem({
               })}
             </div>
             {Object.keys(item.selectedShares).length > 0 && (
-              <div className="flex items-center justify-between rounded-lg border border-secondary/30 bg-secondary/8 px-3 py-2">
+              <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/8 px-3 py-2">
                 <span className="text-xs font-bold text-muted-foreground">
                   {isAR ? "إجمالي الأسهم:" : "Shares total:"}
                 </span>
@@ -551,21 +568,21 @@ export function DonationEntityItem({
                 return (
                   <button type="button" role="radio" aria-checked={sel} key={cs.id} disabled={!!inLine}
                     onClick={() => onUpdate({ ...item, selectedCaseId: cs.id, amount: left > 0 && item.amount > left ? left : item.amount })}
-                    className={`flex h-full flex-col rounded-xl border p-2.5 text-start transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary disabled:cursor-not-allowed ${
-                      sel ? "border-secondary bg-secondary/[0.08] ring-1 ring-secondary/30" : inLine ? "border-border/50 bg-muted/30 opacity-70" : "border-border/70 bg-card hover:border-secondary/40"
+                    className={`flex h-full flex-col rounded-xl border p-2.5 text-start transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed ${
+                      sel ? "border-primary bg-primary/[0.08] ring-1 ring-primary/30" : inLine ? "border-border/50 bg-muted/30 opacity-70" : "border-border/70 bg-card hover:border-primary/40"
                     }`}>
                     <span className="flex w-full items-start gap-2.5">
                       <span className="relative">
                         <OptionThumb src={cs.image} alt={isAR ? cs.titleAr : cs.titleEn} kind="case" />
-                        <span className={`absolute -start-1 -top-1 grid h-4 w-4 place-items-center rounded-full border-2 bg-card ${sel ? "border-secondary bg-secondary" : "border-border"}`}>
-                          {sel && <Check className="h-2.5 w-2.5 text-slate-950" strokeWidth={4} />}
+                        <span className={`absolute -start-1 -top-1 grid h-4 w-4 place-items-center rounded-full border-2 bg-card ${sel ? "border-primary bg-primary" : "border-border"}`}>
+                          {sel && <Check className="h-2.5 w-2.5 text-primary-foreground" strokeWidth={4} />}
                         </span>
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="line-clamp-2 block text-xs font-black leading-5 text-primary sm:text-[13px]">
                           {isAR ? cs.titleAr : cs.titleEn}
                         </span>
-                        {place && <span className="mt-0.5 block truncate text-[10.5px] font-bold text-accent">{place}</span>}
+                        {place && <span className="mt-0.5 block truncate text-[10.5px] font-bold text-primary">{place}</span>}
                       </span>
                       {cs.urgent && (
                         <span className="shrink-0 rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-px text-[9.5px] font-black text-destructive">
@@ -576,7 +593,7 @@ export function DonationEntityItem({
                     {need > 0 && (
                       <span className="mt-auto block w-full pt-2.5">
                         <span className="block h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                          <span className="block h-full rounded-full bg-secondary" style={{ width: `${pct}%` }} />
+                          <span className="block h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
                         </span>
                         <span className="mt-1 flex items-center justify-between gap-2 text-[10.5px] font-bold">
                           <span className="text-muted-foreground">
@@ -607,7 +624,7 @@ export function DonationEntityItem({
                   {chips.map((a) => (
                     <button key={a} type="button" onClick={() => onUpdate({ ...item, amount: a })}
                       className={`rounded-lg border px-3 py-1.5 text-xs font-black transition ${
-                        item.amount === a ? "border-secondary bg-secondary text-slate-950" : "border-border/70 bg-card text-primary hover:border-secondary/50"
+                        item.amount === a ? "border-primary bg-primary text-primary-foreground" : "border-border/70 bg-card text-primary hover:border-primary/50"
                       }`}>
                       {a === left
                         ? (isAR ? `أكمل الحالة (${a.toLocaleString("en-US")} ج)` : `Complete it (${a.toLocaleString()} EGP)`)
@@ -627,7 +644,7 @@ export function DonationEntityItem({
                   value={item.amount || ""}
                   onChange={(e) => onUpdate({ ...item, amount: Number(e.target.value) || 0 })}
                   placeholder={isAR ? "اكتب المبلغ" : "Amount"}
-                  className="h-9 ps-3 pe-14 font-black text-sm rounded-xl border-border/70 focus:border-secondary focus:ring-2 focus:ring-secondary/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="h-9 ps-3 pe-14 font-black text-sm rounded-xl border-border/70 focus:border-primary focus:ring-2 focus:ring-primary/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
                 <span className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-[10.5px] font-black text-muted-foreground">
                   {isAR ? "ج.م" : "EGP"}
@@ -676,6 +693,8 @@ export function DonationEntityItem({
             </div>
           </div>
         )}
+
+        </>)}
 
         {/* Error */}
         {error && (

@@ -13,6 +13,8 @@ export type BasketLine = {
 
 /** The things a line holds, as stable keys. */
 export function lineKeys(it: BasketLine): string[] {
+  // A line whose program is not chosen yet holds nothing.
+  if (!it.entityId) return [];
   switch (it.donationMode) {
     case "shares":
       return Object.entries(it.selectedShares)
